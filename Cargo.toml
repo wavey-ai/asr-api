@@ -1,0 +1,27 @@
+[package]
+name = "bag-of-beats"
+version = "0.1.0"
+edition = "2021"
+
+[patch."https://github.com/wavey-ai/http-pack.git"]
+http-pack = { path = "../http-pack" }
+
+[dependencies]
+anyhow = "1.0"
+async-trait = "0.1"
+bytes = "1"
+clap = { version = "4.5", features = ["derive", "env"] }
+dotenvy = "0.15"
+futures-util = "0.3"
+http = "1"
+http-pack = { git = "https://github.com/wavey-ai/http-pack.git", default-features = false }
+parakeet-rs = "0.3.4"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+soundkit = { path = "../soundkit/soundkit" }
+soundkit-decoder = { path = "../soundkit/soundkit-decoder" }
+tokio = { version = "1.45", features = ["full"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+upload-response = { path = "../web-services/upload-response" }
+web-service = { path = "../web-services/web-service" }
