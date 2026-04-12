@@ -3,14 +3,15 @@ set -euo pipefail
 
 : "${KUBECONFIG:?set KUBECONFIG to the target cluster kubeconfig}"
 : "${LINODE_TOKEN:?set LINODE_TOKEN for Linode DNS updates}"
-: "${GHCR_USERNAME:=jbrough}"
-: "${GHCR_TOKEN:?set GHCR_TOKEN for ghcr.io pulls}"
+: "${REGISTRY_SERVER:=asr-registry.wavey.ai}"
+: "${REGISTRY_USERNAME:=asr-api}"
+: "${REGISTRY_PASSWORD:?set REGISTRY_PASSWORD for private image pulls}"
 
 ASR_API_NAMESPACE="${ASR_API_NAMESPACE:-asr-api}"
 ASR_API_DOMAIN="${ASR_API_DOMAIN:-asr.wavey.ai}"
 ASR_API_KUSTOMIZE_PATH="${ASR_API_KUSTOMIZE_PATH:-deploy/k8s/asr-api}"
-ASR_API_INGRESS_IMAGE="${ASR_API_INGRESS_IMAGE:-ghcr.io/wavey-ai/asr-api-ingress:main}"
-ASR_API_WORKER_IMAGE="${ASR_API_WORKER_IMAGE:-ghcr.io/wavey-ai/asr-api-worker:main}"
+ASR_API_INGRESS_IMAGE="${ASR_API_INGRESS_IMAGE:-asr-registry.wavey.ai/asr-api-ingress:main}"
+ASR_API_WORKER_IMAGE="${ASR_API_WORKER_IMAGE:-asr-registry.wavey.ai/asr-api-worker:main}"
 ASR_API_MODEL_PVC="${ASR_API_MODEL_PVC:-asr-api-model}"
 MODEL_TARBALL_URL="${MODEL_TARBALL_URL:-}"
 
@@ -38,10 +39,10 @@ openssl req -x509 -nodes -newkey rsa:2048 -sha256 \
 
 kubectl apply -f "${ASR_API_KUSTOMIZE_PATH}/namespace.yaml"
 
-kubectl -n "$ASR_API_NAMESPACE" create secret docker-registry ghcr-wavey-ai \
-  --docker-server=ghcr.io \
-  --docker-username="$GHCR_USERNAME" \
-  --docker-password="$GHCR_TOKEN" \
+kubectl -n "$ASR_API_NAMESPACE" create secret docker-registry asr-registry \
+  --docker-server="$REGISTRY_SERVER" \
+  --docker-username="$REGISTRY_USERNAME" \
+  --docker-password="$REGISTRY_PASSWORD" \
   --dry-run=client -o yaml | kubectl apply -f -
 
 kubectl -n "$ASR_API_NAMESPACE" create secret tls asr-api-tls \

@@ -22,7 +22,7 @@ spec:
     spec:
       serviceAccountName: asr-api
       imagePullSecrets:
-        - name: ghcr-wavey-ai
+        - name: asr-registry
       terminationGracePeriodSeconds: 120
       affinity:
         nodeAffinity:
@@ -35,7 +35,7 @@ spec:
                       - g2-gpu-rtx4000a1-s
       containers:
         - name: ingress
-          image: ghcr.io/wavey-ai/asr-api-ingress:main
+          image: asr-registry.wavey.ai/asr-api-ingress:main
           imagePullPolicy: IfNotPresent
           ports:
             - name: https

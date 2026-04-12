@@ -18,8 +18,9 @@ env:
   ASR_API_CLUSTER_LABEL: wavey
   ASR_API_NAMESPACE: asr-api
   ASR_API_DOMAIN: asr.wavey.ai
-  ASR_API_INGRESS_IMAGE_REPO: ghcr.io/wavey-ai/asr-api-ingress
-  ASR_API_WORKER_IMAGE_REPO: ghcr.io/wavey-ai/asr-api-worker
+  ASR_API_REGISTRY: asr-registry.wavey.ai
+  ASR_API_INGRESS_IMAGE_REPO: asr-registry.wavey.ai/asr-api-ingress
+  ASR_API_WORKER_IMAGE_REPO: asr-registry.wavey.ai/asr-api-worker
   ASR_API_KUSTOMIZE_PATH: deploy/k8s/asr-api
   ASR_API_MODEL_PVC: asr-api-model
   ASR_API_MODEL_ROOT: /var/lib/asr-api/models
@@ -97,28 +98,12 @@ jobs:
           printf '  %s\n' $changed_files
           echo "wait_image=$wait_image"
 
-      - name: Resolve GHCR username
-        id: ghcr_user
-        env:
-          GH_TOKEN: ${{ secrets.WAVEY_AI_GH_TOKEN }}
-        run: |
-          set -euo pipefail
-          login="$(
-            curl -fsSL \
-              -H "Accept: application/vnd.github+json" \
-              -H "Authorization: Bearer ${GH_TOKEN}" \
-              -H "X-GitHub-Api-Version: 2022-11-28" \
-              https://api.github.com/user \
-              | python3 -c 'import json, sys; print(json.load(sys.stdin)["login"])'
-          )"
-          echo "login=${login}" >> "$GITHUB_OUTPUT"
-
-      - name: Log in to GHCR for deploy
+      - name: Log in to asr registry for deploy
         uses: docker/login-action@v3
         with:
-          registry: ghcr.io
-          username: ${{ steps.ghcr_user.outputs.login }}
-          password: ${{ secrets.WAVEY_AI_GH_TOKEN }}
+          registry: ${{ env.ASR_API_REGISTRY }}
+          username: asr-api
+          password: ${{ secrets.ASR_REGISTRY_PASSWORD }}
 
       - name: Resolve LKE cluster
         id: cluster
@@ -146,8 +131,9 @@ jobs:
         env:
           KUBECONFIG: ${{ steps.kubeconfig.outputs.kubeconfig }}
           LINODE_TOKEN: ${{ secrets.LINODE_TOKEN }}
-          GHCR_USERNAME: ${{ steps.ghcr_user.outputs.login }}
-          GHCR_TOKEN: ${{ secrets.WAVEY_AI_GH_TOKEN }}
+          REGISTRY_SERVER: ${{ env.ASR_API_REGISTRY }}
+          REGISTRY_USERNAME: asr-api
+          REGISTRY_PASSWORD: ${{ secrets.ASR_REGISTRY_PASSWORD }}
           MODEL_TARBALL_URL: ${{ secrets.ASR_API_MODEL_TARBALL_URL }}
         run: |
           set -euo pipefail

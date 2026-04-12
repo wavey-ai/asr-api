@@ -6,6 +6,8 @@ ARG OPUS_VERSION=1.5.2
 ARG PYTHON_SITE_PACKAGES=/usr/local/lib/python3.10/dist-packages
 ARG TORCH_VERSION=2.7.0
 ARG TORCH_INDEX_URL=https://download.pytorch.org/whl/cu128
+ARG ONNXRUNTIME_VERSION=1.24.4
+ARG ONNXRUNTIME_GPU_TGZ_URL=https://github.com/microsoft/onnxruntime/releases/download/v${ONNXRUNTIME_VERSION}/onnxruntime-linux-x64-gpu-${ONNXRUNTIME_VERSION}.tgz
 ARG TENSORRT_REPO_DEB_URL=https://developer.download.nvidia.com/compute/machine-learning/tensorrt/10.9.0/local_repo/nv-tensorrt-local-repo-ubuntu2204-10.9.0-cuda-12.8_1.0-1_amd64.deb
 
 FROM ${CUDA_DEVEL_IMAGE} AS build
@@ -15,6 +17,8 @@ ARG OPUS_VERSION
 ARG PYTHON_SITE_PACKAGES
 ARG TORCH_VERSION
 ARG TORCH_INDEX_URL
+ARG ONNXRUNTIME_VERSION
+ARG ONNXRUNTIME_GPU_TGZ_URL
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
@@ -62,6 +66,11 @@ ENV LD_LIBRARY_PATH=/usr/local/lib:${PYTHON_SITE_PACKAGES}/torch/lib
 RUN --mount=type=cache,target=/root/.cache/pip \
     python3 -m pip install --cache-dir /root/.cache/pip --index-url ${TORCH_INDEX_URL} torch==${TORCH_VERSION}
 
+RUN curl -fsSL "${ONNXRUNTIME_GPU_TGZ_URL}" -o /tmp/onnxruntime.tgz \
+    && mkdir -p /opt/onnxruntime \
+    && tar -xzf /tmp/onnxruntime.tgz -C /opt/onnxruntime --strip-components=1 \
+    && rm -f /tmp/onnxruntime.tgz
+
 WORKDIR /app
 
 COPY Cargo.toml Cargo.lock /app/
@@ -79,10 +88,13 @@ RUN --mount=type=secret,id=github_token,required=true \
     mkdir -p /opt/asr-bin; \
     cp /app/target/release/asr-api /opt/asr-bin/asr-api; \
     mkdir -p /opt/asr-runtime-libs; \
-    find /app/target/release \
-      \( -name 'libonnxruntime_providers*.so*' -o -name 'libonnxruntime*.so*' \) \
-      -exec cp -L {} /opt/asr-runtime-libs/ \; \
-    && ls -l /opt/asr-runtime-libs
+    cp -L /opt/onnxruntime/lib/libonnxruntime*.so* /opt/asr-runtime-libs/; \
+    cp -L /opt/onnxruntime/lib/libonnxruntime_providers*.so* /opt/asr-runtime-libs/; \
+    if [ ! -e /opt/asr-runtime-libs/libonnxruntime.so ]; then \
+      target="$(basename "$(find /opt/asr-runtime-libs -maxdepth 1 -type f -name 'libonnxruntime.so.*' | sort | head -n 1)")"; \
+      ln -sf "$target" /opt/asr-runtime-libs/libonnxruntime.so; \
+    fi; \
+    ls -l /opt/asr-runtime-libs
 
 FROM ${CUDA_RUNTIME_IMAGE} AS runtime
 
@@ -95,6 +107,7 @@ RUN apt-get update \
       ca-certificates \
       curl \
       libgomp1 \
+      libcusparselt0-cuda-12 \
     && rm -rf /var/lib/apt/lists/*
 
 RUN curl -fsSL "${TENSORRT_REPO_DEB_URL}" -o /tmp/tensorrt.deb \
@@ -113,7 +126,8 @@ COPY --from=build /opt/asr-bin/asr-api /usr/local/bin/asr-api
 ENV LIBTORCH_USE_PYTORCH=1
 ENV LIBTORCH_BYPASS_VERSION_CHECK=1
 ENV LIBTORCH=/opt/libtorch
-ENV LD_LIBRARY_PATH=/usr/local/lib:/opt/libtorch/lib:/usr/lib/x86_64-linux-gnu:/usr/local/cuda/lib64
+ENV ASR_ONNX_RUNTIME_LIB=/usr/local/lib/libonnxruntime.so
+ENV LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu/libcusparseLt/12:/usr/local/lib:/opt/libtorch/lib:/usr/lib/x86_64-linux-gnu:/usr/local/cuda/lib64
 ENV LD_PRELOAD=/opt/libtorch/lib/libc10_cuda.so:/opt/libtorch/lib/libtorch_cuda.so:/opt/libtorch/lib/libtorch_cuda_linalg.so
 ENV RUST_LOG=asr_api=info,web_service=info,upload_response=info
 

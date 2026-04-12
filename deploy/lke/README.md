@@ -10,7 +10,7 @@ Internal naming:
 
 - shared cluster: `wavey`
 - namespace: `asr-api`
-- image: `ghcr.io/wavey-ai/asr-api`
+- image: `asr-registry.wavey.ai/asr-api-worker`
 - ingress deployment: `asr-api-ingress`
 - worker deployment: `asr-api-worker`
 

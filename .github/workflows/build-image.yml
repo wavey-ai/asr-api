@@ -22,7 +22,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  REGISTRY: ghcr.io
+  REGISTRY: asr-registry.wavey.ai
 
 jobs:
   build:
@@ -31,12 +31,12 @@ jobs:
       matrix:
         include:
           - component: ingress
-            image: ghcr.io/wavey-ai/asr-api-ingress
+            image: asr-registry.wavey.ai/asr-api-ingress
             dockerfile: docker/asr-api-ingress.Dockerfile
             cache_scope: asr-api-ingress
             local_cache: /var/lib/buildkit-cache/asr-api-ingress
           - component: worker
-            image: ghcr.io/wavey-ai/asr-api-worker
+            image: asr-registry.wavey.ai/asr-api-worker
             dockerfile: docker/asr-api.Dockerfile
             cache_scope: asr-api-worker
             local_cache: /var/lib/buildkit-cache/asr-api-worker
@@ -57,12 +57,12 @@ jobs:
           driver: docker-container
           keep-state: true
 
-      - name: Log in to GHCR
+      - name: Log in to asr registry
         uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+          username: asr-api
+          password: ${{ secrets.ASR_REGISTRY_PASSWORD }}
 
       - name: Docker metadata
         id: meta

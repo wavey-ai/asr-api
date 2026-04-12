@@ -24,7 +24,7 @@ spec:
     spec:
       serviceAccountName: asr-api
       imagePullSecrets:
-        - name: ghcr-wavey-ai
+        - name: asr-registry
       terminationGracePeriodSeconds: 120
       tolerations:
         - key: wavey.ai/gpu
@@ -78,7 +78,7 @@ spec:
               mountPath: /var/lib/asr-api/models
       containers:
         - name: worker
-          image: ghcr.io/wavey-ai/asr-api-worker:main
+          image: asr-registry.wavey.ai/asr-api-worker:main
           imagePullPolicy: IfNotPresent
           ports:
             - name: https
