@@ -58,7 +58,8 @@ ENV LIBTORCH_BYPASS_VERSION_CHECK=1
 ENV ORT_CUDA_VERSION=12
 ENV LD_LIBRARY_PATH=/usr/local/lib:${PYTHON_SITE_PACKAGES}/torch/lib
 
-RUN python3 -m pip install --no-cache-dir --index-url ${TORCH_INDEX_URL} torch==${TORCH_VERSION}
+RUN --mount=type=cache,target=/root/.cache/pip \
+    python3 -m pip install --cache-dir /root/.cache/pip --index-url ${TORCH_INDEX_URL} torch==${TORCH_VERSION}
 
 WORKDIR /app
 
@@ -66,6 +67,9 @@ COPY Cargo.toml Cargo.lock /app/
 COPY src /app/src
 
 RUN --mount=type=secret,id=github_token,required=true \
+    --mount=type=cache,target=/root/.cargo/registry,sharing=locked \
+    --mount=type=cache,target=/root/.cargo/git,sharing=locked \
+    --mount=type=cache,target=/app/target,sharing=locked \
     set -eu; \
     token="$(cat /run/secrets/github_token)"; \
     git config --global url."https://x-access-token:${token}@github.com/".insteadOf "https://github.com/"; \

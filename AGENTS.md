@@ -6,7 +6,7 @@ Current operating context
 
 Repos / local dependencies
 
-- Canonical repo: `/Users/jamieb/wavey.ai/transcriber`
+- Canonical repo: `/Users/jamieb/wavey.ai/asr-api`
 - Sibling repos used by the current stack:
   - `/Users/jamieb/wavey.ai/asr-onnx`
   - `/Users/jamieb/wavey.ai/asr-torch`

@@ -121,48 +121,16 @@ jobs:
       - name: Deploy asr-api to LKE
         env:
           KUBECONFIG: ${{ steps.kubeconfig.outputs.kubeconfig }}
+          GHCR_USERNAME: ${{ github.actor }}
+          GHCR_TOKEN: ${{ github.token }}
           MODEL_TARBALL_URL: ${{ secrets.ASR_API_MODEL_TARBALL_URL }}
         run: |
           set -euo pipefail
 
-          kubectl apply -f "$ASR_API_KUSTOMIZE_PATH/namespace.yaml"
-
-          openssl req -x509 -nodes -newkey rsa:2048 -sha256 \
-            -keyout "$RUNNER_TEMP/asr-api.key" \
-            -out "$RUNNER_TEMP/asr-api.crt" \
-            -days 30 \
-            -subj "/CN=asr-api" \
-            -addext "subjectAltName=DNS:asr-api-ingress,DNS:asr-api-ingress.${ASR_API_NAMESPACE}.svc.cluster.local,DNS:asr-api-ingress-internal,DNS:asr-api-ingress-internal.${ASR_API_NAMESPACE}.svc.cluster.local"
-
-          openssl req -x509 -nodes -newkey rsa:2048 -sha256 \
-            -keyout "$RUNNER_TEMP/${ASR_API_DOMAIN}.key" \
-            -out "$RUNNER_TEMP/${ASR_API_DOMAIN}.crt" \
-            -days 30 \
-            -subj "/CN=${ASR_API_DOMAIN}" \
-            -addext "subjectAltName=DNS:${ASR_API_DOMAIN}"
-
-          kubectl -n "$ASR_API_NAMESPACE" create secret docker-registry ghcr-wavey-ai \
-            --docker-server=ghcr.io \
-            --docker-username="${{ github.actor }}" \
-            --docker-password="${{ github.token }}" \
-            --dry-run=client -o yaml | kubectl apply -f -
-
-          kubectl -n "$ASR_API_NAMESPACE" create secret tls asr-api-tls \
-            --cert="$RUNNER_TEMP/asr-api.crt" \
-            --key="$RUNNER_TEMP/asr-api.key" \
-            --dry-run=client -o yaml | kubectl apply -f -
-
-          kubectl -n "$ASR_API_NAMESPACE" create secret tls asr-wavey-ai-tls \
-            --cert="$RUNNER_TEMP/${ASR_API_DOMAIN}.crt" \
-            --key="$RUNNER_TEMP/${ASR_API_DOMAIN}.key" \
-            --dry-run=client -o yaml | kubectl apply -f -
-
-          echo "${{ github.token }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
-
           wait_for_image() {
             local image="$1"
-            local attempts="${2:-60}"
-            local delay_seconds="${3:-10}"
+            local attempts="${2:-180}"
+            local delay_seconds="${3:-20}"
             for _ in $(seq 1 "$attempts"); do
               if docker manifest inspect "$image" >/dev/null 2>&1; then
                 return 0
@@ -182,113 +150,6 @@ jobs:
             wait_for_image "$asr_api_ingress_image"
           fi
 
-          kubectl apply -f "$ASR_API_KUSTOMIZE_PATH/pvc.yaml"
-
-          if [ -n "${MODEL_TARBALL_URL}" ]; then
-            kubectl -n "$ASR_API_NAMESPACE" delete job asr-api-model-sync --ignore-not-found=true --wait=true || true
-            kubectl -n "$ASR_API_NAMESPACE" create secret generic asr-api-model-sync \
-              --from-literal=model-url="$MODEL_TARBALL_URL" \
-              --dry-run=client -o yaml | kubectl apply -f -
-
-            cat <<'EOF' | kubectl apply -f -
-            apiVersion: batch/v1
-            kind: Job
-            metadata:
-              name: asr-api-model-sync
-              namespace: asr-api
-            spec:
-              ttlSecondsAfterFinished: 300
-              backoffLimit: 1
-              template:
-                spec:
-                  restartPolicy: Never
-                  containers:
-                    - name: sync
-                      image: alpine:3.20
-                      command:
-                        - sh
-                        - -lc
-                        - |
-                          set -euo pipefail
-                          apk add --no-cache ca-certificates curl >/dev/null
-                          archive="/tmp/parakeet-model.tar.gz"
-                          scratch_dir="/tmp/parakeet-model"
-                          target_dir="/var/lib/asr-api/models/parakeet-tdt"
-                          rm -rf "$scratch_dir" "$target_dir"
-                          mkdir -p "$scratch_dir" "$target_dir"
-                          curl -fsSL "$MODEL_TARBALL_URL" -o "$archive"
-                          tar -xzf "$archive" -C "$scratch_dir"
-                          source_dir="$scratch_dir"
-                          if [ ! -f "$source_dir/encoder.onnx" ] && [ ! -f "$source_dir/encoder.fp16.onnx" ] && [ ! -f "$source_dir/encoder.int8.onnx" ]; then
-                            candidate="$(find "$scratch_dir" -mindepth 1 -maxdepth 4 -type f \( -name encoder.onnx -o -name encoder.fp16.onnx -o -name encoder.int8.onnx \) | head -n 1)"
-                            [ -n "$candidate" ] || exit 1
-                            source_dir="$(dirname "$candidate")"
-                          fi
-                          copy_first() {
-                            dest_dir="$1"
-                            shift
-                            for name in "$@"; do
-                              if [ -f "$source_dir/$name" ]; then
-                                cp "$source_dir/$name" "$dest_dir/"
-                                if [ -f "$source_dir/$name.data" ]; then
-                                  cp "$source_dir/$name.data" "$dest_dir/"
-                                fi
-                                return 0
-                              fi
-                            done
-                            return 1
-                          }
-
-                          copy_first "$target_dir" encoder.fp16.onnx encoder.onnx encoder.int8.onnx
-                          copy_first "$target_dir" decoder.fp16.onnx decoder.onnx decoder.int8.onnx
-                          copy_first "$target_dir" joint.enc.fp16.onnx joint.enc.onnx joint.enc.int8.onnx
-                          copy_first "$target_dir" joint.pred.fp16.onnx joint.pred.onnx joint.pred.int8.onnx
-                          copy_first "$target_dir" joint.joint_net.fp16.onnx joint.joint_net.onnx joint.joint_net.int8.onnx
-                          copy_first "$target_dir" tokens.txt vocab.txt
-                      env:
-                        - name: MODEL_TARBALL_URL
-                          valueFrom:
-                            secretKeyRef:
-                              name: asr-api-model-sync
-                              key: model-url
-                      volumeMounts:
-                        - name: model
-                          mountPath: /var/lib/asr-api/models
-                  volumes:
-                    - name: model
-                      persistentVolumeClaim:
-                        claimName: asr-api-model
-            EOF
-
-            kubectl -n "$ASR_API_NAMESPACE" wait --for=condition=complete job/asr-api-model-sync --timeout=20m
-            kubectl -n "$ASR_API_NAMESPACE" logs job/asr-api-model-sync
-            kubectl -n "$ASR_API_NAMESPACE" delete secret asr-api-model-sync --ignore-not-found=true
-          else
-            echo "ASR_API_MODEL_TARBALL_URL not set; skipping model sync job"
-          fi
-
-          kubectl apply -k "$ASR_API_KUSTOMIZE_PATH"
-          kubectl -n "$ASR_API_NAMESPACE" set image deployment/asr-api-ingress ingress="$asr_api_ingress_image"
-          kubectl -n "$ASR_API_NAMESPACE" set image deployment/asr-api-worker worker="$asr_api_worker_image"
-          kubectl -n "$ASR_API_NAMESPACE" rollout restart deployment/asr-api-ingress
-          kubectl -n "$ASR_API_NAMESPACE" rollout restart deployment/asr-api-worker
-          kubectl -n "$ASR_API_NAMESPACE" rollout status deployment/asr-api-ingress --timeout=15m
-          kubectl -n "$ASR_API_NAMESPACE" rollout status deployment/asr-api-worker --timeout=15m
-          ingress_ip=""
-          for _ in $(seq 1 60); do
-            ingress_ip="$(kubectl -n "$ASR_API_NAMESPACE" get ingress asr-api-ingress -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || true)"
-            if [ -z "$ingress_ip" ]; then
-              ingress_ip="$(kubectl -n ingress-nginx get svc ingress-nginx-controller -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || true)"
-            fi
-            if [ -n "$ingress_ip" ]; then
-              break
-            fi
-            sleep 5
-          done
-          test -n "$ingress_ip"
-          python3 deploy/linode_api.py upsert-domain-a-record \
-            --domain wavey.ai \
-            --name asr \
-            --target "$ingress_ip" \
-            --ttl-sec 30
-          kubectl -n "$ASR_API_NAMESPACE" get deploy,pods,svc,ingress
+          ASR_API_INGRESS_IMAGE="$asr_api_ingress_image" \
+          ASR_API_WORKER_IMAGE="$asr_api_worker_image" \
+          bash deploy/lke/manual-deploy.sh
