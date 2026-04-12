@@ -92,6 +92,7 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends \
       ca-certificates \
       curl \
+      libgomp1 \
     && rm -rf /var/lib/apt/lists/*
 
 RUN curl -fsSL "${TENSORRT_REPO_DEB_URL}" -o /tmp/tensorrt.deb \
