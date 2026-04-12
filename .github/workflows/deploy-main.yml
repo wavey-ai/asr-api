@@ -1,4 +1,4 @@
-name: Deploy Transcriber
+name: Deploy Asr API
 
 on:
   push:
@@ -11,17 +11,17 @@ permissions:
   packages: read
 
 concurrency:
-  group: deploy-transcriber-main
+  group: deploy-asr-api-main
   cancel-in-progress: true
 
 env:
-  TRANSCRIBER_CLUSTER_LABEL: wavey
-  TRANSCRIBER_NAMESPACE: transcriber
-  TRANSCRIBER_DOMAIN: transcribe.wavey.ai
-  TRANSCRIBER_IMAGE: ghcr.io/wavey-ai/transcriber
-  TRANSCRIBER_MODEL_PVC: transcriber-model
-  TRANSCRIBER_MODEL_ROOT: /var/lib/transcriber/models
-  TRANSCRIBER_MODEL_DIR: /var/lib/transcriber/models/parakeet-tdt
+  ASR_API_CLUSTER_LABEL: wavey
+  ASR_API_NAMESPACE: asr-api
+  ASR_API_DOMAIN: asr.wavey.ai
+  ASR_API_IMAGE: ghcr.io/wavey-ai/asr-api
+  ASR_API_MODEL_PVC: asr-api-model
+  ASR_API_MODEL_ROOT: /var/lib/asr-api/models
+  ASR_API_MODEL_DIR: /var/lib/asr-api/models/parakeet-tdt
 
 jobs:
   deploy:
@@ -49,7 +49,7 @@ jobs:
       - name: Validate deploy artifacts
         run: |
           set -euo pipefail
-          cargo check --locked
+          cargo metadata --locked --no-deps >/dev/null
           python3 -m py_compile deploy/linode_api.py
           kubectl kustomize deploy/k8s/transcriber >/dev/null
 
@@ -102,7 +102,7 @@ jobs:
         run: |
           set -euo pipefail
           python3 deploy/linode_api.py cluster-id \
-            --label "$TRANSCRIBER_CLUSTER_LABEL" \
+            --label "$ASR_API_CLUSTER_LABEL" \
             --github-output "$GITHUB_OUTPUT"
 
       - name: Fetch cluster kubeconfig
@@ -117,43 +117,43 @@ jobs:
             --output "$kubeconfig_path" \
             --github-output "$GITHUB_OUTPUT"
 
-      - name: Deploy transcriber to LKE
+      - name: Deploy asr-api to LKE
         env:
           KUBECONFIG: ${{ steps.kubeconfig.outputs.kubeconfig }}
-          MODEL_TARBALL_URL: ${{ secrets.TRANSCRIBER_MODEL_TARBALL_URL }}
+          MODEL_TARBALL_URL: ${{ secrets.ASR_API_MODEL_TARBALL_URL }}
         run: |
           set -euo pipefail
 
           kubectl apply -f deploy/k8s/transcriber/namespace.yaml
 
           openssl req -x509 -nodes -newkey rsa:2048 -sha256 \
-            -keyout "$RUNNER_TEMP/transcriber.key" \
-            -out "$RUNNER_TEMP/transcriber.crt" \
+            -keyout "$RUNNER_TEMP/asr-api.key" \
+            -out "$RUNNER_TEMP/asr-api.crt" \
             -days 30 \
-            -subj "/CN=transcriber" \
-            -addext "subjectAltName=DNS:transcriber,DNS:transcriber.${TRANSCRIBER_NAMESPACE}.svc.cluster.local"
+            -subj "/CN=asr-api" \
+            -addext "subjectAltName=DNS:asr-api-ingress,DNS:asr-api-ingress.${ASR_API_NAMESPACE}.svc.cluster.local,DNS:asr-api-ingress-internal,DNS:asr-api-ingress-internal.${ASR_API_NAMESPACE}.svc.cluster.local"
 
           openssl req -x509 -nodes -newkey rsa:2048 -sha256 \
-            -keyout "$RUNNER_TEMP/${TRANSCRIBER_DOMAIN}.key" \
-            -out "$RUNNER_TEMP/${TRANSCRIBER_DOMAIN}.crt" \
+            -keyout "$RUNNER_TEMP/${ASR_API_DOMAIN}.key" \
+            -out "$RUNNER_TEMP/${ASR_API_DOMAIN}.crt" \
             -days 30 \
-            -subj "/CN=${TRANSCRIBER_DOMAIN}" \
-            -addext "subjectAltName=DNS:${TRANSCRIBER_DOMAIN}"
+            -subj "/CN=${ASR_API_DOMAIN}" \
+            -addext "subjectAltName=DNS:${ASR_API_DOMAIN}"
 
-          kubectl -n "$TRANSCRIBER_NAMESPACE" create secret docker-registry ghcr-wavey-ai \
+          kubectl -n "$ASR_API_NAMESPACE" create secret docker-registry ghcr-wavey-ai \
             --docker-server=ghcr.io \
             --docker-username="${{ github.actor }}" \
             --docker-password="${{ github.token }}" \
             --dry-run=client -o yaml | kubectl apply -f -
 
-          kubectl -n "$TRANSCRIBER_NAMESPACE" create secret tls transcriber-tls \
-            --cert="$RUNNER_TEMP/transcriber.crt" \
-            --key="$RUNNER_TEMP/transcriber.key" \
+          kubectl -n "$ASR_API_NAMESPACE" create secret tls asr-api-tls \
+            --cert="$RUNNER_TEMP/asr-api.crt" \
+            --key="$RUNNER_TEMP/asr-api.key" \
             --dry-run=client -o yaml | kubectl apply -f -
 
-          kubectl -n "$TRANSCRIBER_NAMESPACE" create secret tls transcribe-wavey-ai-tls \
-            --cert="$RUNNER_TEMP/${TRANSCRIBER_DOMAIN}.crt" \
-            --key="$RUNNER_TEMP/${TRANSCRIBER_DOMAIN}.key" \
+          kubectl -n "$ASR_API_NAMESPACE" create secret tls asr-wavey-ai-tls \
+            --cert="$RUNNER_TEMP/${ASR_API_DOMAIN}.crt" \
+            --key="$RUNNER_TEMP/${ASR_API_DOMAIN}.key" \
             --dry-run=client -o yaml | kubectl apply -f -
 
           echo "${{ github.token }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
@@ -172,18 +172,18 @@ jobs:
             return 1
           }
 
-          transcriber_image="${TRANSCRIBER_IMAGE}:main"
+          asr_api_image="${ASR_API_IMAGE}:main"
           if [ "${{ steps.changes.outputs.wait_image }}" = "true" ]; then
             short_sha="${GITHUB_SHA::7}"
-            transcriber_image="${TRANSCRIBER_IMAGE}:sha-${short_sha}"
-            wait_for_image "$transcriber_image"
+            asr_api_image="${ASR_API_IMAGE}:sha-${short_sha}"
+            wait_for_image "$asr_api_image"
           fi
 
           kubectl apply -f deploy/k8s/transcriber/pvc.yaml
 
           if [ -n "${MODEL_TARBALL_URL}" ]; then
-            kubectl -n "$TRANSCRIBER_NAMESPACE" delete job transcriber-model-sync --ignore-not-found=true --wait=true || true
-            kubectl -n "$TRANSCRIBER_NAMESPACE" create secret generic transcriber-model-sync \
+            kubectl -n "$ASR_API_NAMESPACE" delete job asr-api-model-sync --ignore-not-found=true --wait=true || true
+            kubectl -n "$ASR_API_NAMESPACE" create secret generic asr-api-model-sync \
               --from-literal=model-url="$MODEL_TARBALL_URL" \
               --dry-run=client -o yaml | kubectl apply -f -
 
@@ -191,8 +191,8 @@ jobs:
             apiVersion: batch/v1
             kind: Job
             metadata:
-              name: transcriber-model-sync
-              namespace: transcriber
+              name: asr-api-model-sync
+              namespace: asr-api
             spec:
               ttlSecondsAfterFinished: 300
               backoffLimit: 1
@@ -210,7 +210,7 @@ jobs:
                           apk add --no-cache ca-certificates curl >/dev/null
                           archive="/tmp/parakeet-model.tar.gz"
                           scratch_dir="/tmp/parakeet-model"
-                          target_dir="/var/lib/transcriber/models/parakeet-tdt"
+                          target_dir="/var/lib/asr-api/models/parakeet-tdt"
                           rm -rf "$scratch_dir" "$target_dir"
                           mkdir -p "$scratch_dir" "$target_dir"
                           curl -fsSL "$MODEL_TARBALL_URL" -o "$archive"
@@ -227,6 +227,9 @@ jobs:
                             for name in "$@"; do
                               if [ -f "$source_dir/$name" ]; then
                                 cp "$source_dir/$name" "$dest_dir/"
+                                if [ -f "$source_dir/$name.data" ]; then
+                                  cp "$source_dir/$name.data" "$dest_dir/"
+                                fi
                                 return 0
                               fi
                             done
@@ -243,29 +246,46 @@ jobs:
                         - name: MODEL_TARBALL_URL
                           valueFrom:
                             secretKeyRef:
-                              name: transcriber-model-sync
+                              name: asr-api-model-sync
                               key: model-url
                       volumeMounts:
                         - name: model
-                          mountPath: /var/lib/transcriber/models
+                          mountPath: /var/lib/asr-api/models
                   volumes:
                     - name: model
                       persistentVolumeClaim:
-                        claimName: transcriber-model
+                        claimName: asr-api-model
             EOF
 
-            kubectl -n "$TRANSCRIBER_NAMESPACE" wait --for=condition=complete job/transcriber-model-sync --timeout=20m
-            kubectl -n "$TRANSCRIBER_NAMESPACE" logs job/transcriber-model-sync
-            kubectl -n "$TRANSCRIBER_NAMESPACE" delete secret transcriber-model-sync --ignore-not-found=true
+            kubectl -n "$ASR_API_NAMESPACE" wait --for=condition=complete job/asr-api-model-sync --timeout=20m
+            kubectl -n "$ASR_API_NAMESPACE" logs job/asr-api-model-sync
+            kubectl -n "$ASR_API_NAMESPACE" delete secret asr-api-model-sync --ignore-not-found=true
           else
-            echo "TRANSCRIBER_MODEL_TARBALL_URL not set; skipping model sync job"
+            echo "ASR_API_MODEL_TARBALL_URL not set; skipping model sync job"
           fi
 
           kubectl apply -k deploy/k8s/transcriber
-          kubectl -n "$TRANSCRIBER_NAMESPACE" set image deployment/transcriber-ingress ingress="$transcriber_image"
-          kubectl -n "$TRANSCRIBER_NAMESPACE" set image deployment/transcriber-worker worker="$transcriber_image"
-          kubectl -n "$TRANSCRIBER_NAMESPACE" rollout restart deployment/transcriber-ingress
-          kubectl -n "$TRANSCRIBER_NAMESPACE" rollout restart deployment/transcriber-worker
-          kubectl -n "$TRANSCRIBER_NAMESPACE" rollout status deployment/transcriber-ingress --timeout=15m
-          kubectl -n "$TRANSCRIBER_NAMESPACE" rollout status deployment/transcriber-worker --timeout=15m
-          kubectl -n "$TRANSCRIBER_NAMESPACE" get deploy,pods,svc,ingress
+          kubectl -n "$ASR_API_NAMESPACE" set image deployment/asr-api-ingress ingress="$asr_api_image"
+          kubectl -n "$ASR_API_NAMESPACE" set image deployment/asr-api-worker worker="$asr_api_image"
+          kubectl -n "$ASR_API_NAMESPACE" rollout restart deployment/asr-api-ingress
+          kubectl -n "$ASR_API_NAMESPACE" rollout restart deployment/asr-api-worker
+          kubectl -n "$ASR_API_NAMESPACE" rollout status deployment/asr-api-ingress --timeout=15m
+          kubectl -n "$ASR_API_NAMESPACE" rollout status deployment/asr-api-worker --timeout=15m
+          ingress_ip=""
+          for _ in $(seq 1 60); do
+            ingress_ip="$(kubectl -n "$ASR_API_NAMESPACE" get ingress asr-api-ingress -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || true)"
+            if [ -z "$ingress_ip" ]; then
+              ingress_ip="$(kubectl -n ingress-nginx get svc ingress-nginx-controller -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || true)"
+            fi
+            if [ -n "$ingress_ip" ]; then
+              break
+            fi
+            sleep 5
+          done
+          test -n "$ingress_ip"
+          python3 deploy/linode_api.py upsert-domain-a-record \
+            --domain wavey.ai \
+            --name asr \
+            --target "$ingress_ip" \
+            --ttl-sec 30
+          kubectl -n "$ASR_API_NAMESPACE" get deploy,pods,svc,ingress

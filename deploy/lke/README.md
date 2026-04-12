@@ -1,18 +1,18 @@
-# transcriber on wavey LKE
+# asr-api on wavey LKE
 
-`transcriber` deploys into the shared Linode Kubernetes Engine cluster labeled `wavey`.
+`asr-api` deploys into the shared Linode Kubernetes Engine cluster labeled `wavey`.
 
 Public naming:
 
-- public API host: `transcribe.wavey.ai`
+- public API host: `asr.wavey.ai`
 
 Internal naming:
 
 - shared cluster: `wavey`
-- namespace: `transcriber`
-- image: `ghcr.io/wavey-ai/transcriber`
-- ingress deployment: `transcriber-ingress`
-- worker deployment: `transcriber-worker`
+- namespace: `asr-api`
+- image: `ghcr.io/wavey-ai/asr-api`
+- ingress deployment: `asr-api-ingress`
+- worker deployment: `asr-api-worker`
 
 ## Files
 
@@ -29,27 +29,27 @@ Internal naming:
 
 ## Optional GitHub secrets
 
-- `TRANSCRIBER_MODEL_TARBALL_URL`: HTTPS URL to a `.tar.gz` archive containing the split TDT ONNX files plus `tokens.txt` or `vocab.txt`
+- `ASR_API_MODEL_TARBALL_URL`: HTTPS URL to a `.tar.gz` archive containing the split TDT ONNX files plus `tokens.txt` or `vocab.txt`
 
-When `TRANSCRIBER_MODEL_TARBALL_URL` is set, each deploy run will sync that archive into the `transcriber-model` PVC before rolling the workload. If it is not set, you need to seed the PVC yourself before the pod can become healthy.
+When `ASR_API_MODEL_TARBALL_URL` is set, each deploy run will sync that archive into the `asr-api-model` PVC before rolling the workload. If it is not set, you need to seed the PVC yourself before the pod can become healthy.
 
 ## Runtime layout
 
-- namespace: `transcriber`
-- public service: `transcriber-ingress`
-- internal headless service: `transcriber-ingress-internal`
-- public ingress host: `transcribe.wavey.ai`
-- CPU ingress deployment: `transcriber-ingress`
-- GPU worker deployment: `transcriber-worker`
-- model PVC: `transcriber-model`
-- mounted model dir: `/var/lib/transcriber/models/parakeet-tdt`
+- namespace: `asr-api`
+- public service: `asr-api-ingress`
+- internal headless service: `asr-api-ingress-internal`
+- public ingress host: `asr.wavey.ai`
+- CPU ingress deployment: `asr-api-ingress`
+- GPU worker deployment: `asr-api-worker`
+- model PVC: `asr-api-model`
+- mounted model dir: `/var/lib/asr-api/models/parakeet-tdt`
 
 ## Manual model seeding
 
 If you do not want CI to sync the model archive, populate the PVC with the split TDT model files under:
 
 ```text
-/var/lib/transcriber/models/parakeet-tdt
+/var/lib/asr-api/models/parakeet-tdt
 ```
 
 The deployment init container verifies:
@@ -64,8 +64,8 @@ The deployment init container verifies:
 ## Notes
 
 - Both roles terminate TLS themselves on port `8443`.
-- Public nginx ingress points to `transcriber-ingress` and disables request buffering so long uploads stream cleanly.
-- `transcriber-ingress-internal` is headless so GPU workers can discover individual ingress pod IPs and use the internal `/_upload_response/...` cache API directly.
+- Public nginx ingress points to `asr-api-ingress` and disables request buffering so long uploads stream cleanly.
+- `asr-api-ingress-internal` is headless so GPU workers can discover individual ingress pod IPs and use the internal `/_upload_response/...` cache API directly.
 - Audio decode / resample / downmix runs on CPU ingress pods.
 - Featurization stays with ONNX decode on the GPU worker because `asr-torch` loads traced CUDA featurizer modules.
-- The current LKE cluster has only one GPU node, so `transcriber-worker` competes directly with any other `nvidia.com/gpu: 1` deployment, especially `bitneedle-gpu-api`.
+- The current LKE cluster has only one GPU node, so `asr-api-worker` competes directly with any other `nvidia.com/gpu: 1` deployment, especially `bitneedle-gpu-api`.

@@ -1,8 +1,8 @@
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: transcriber-ingress
-  namespace: transcriber
+  name: asr-api-ingress
+  namespace: asr-api
   annotations:
     nginx.ingress.kubernetes.io/backend-protocol: HTTPS
     nginx.ingress.kubernetes.io/proxy-body-size: 512m
@@ -14,16 +14,16 @@ spec:
   ingressClassName: nginx
   tls:
     - hosts:
-        - transcribe.wavey.ai
-      secretName: transcribe-wavey-ai-tls
+        - asr.wavey.ai
+      secretName: asr-wavey-ai-tls
   rules:
-    - host: transcribe.wavey.ai
+    - host: asr.wavey.ai
       http:
         paths:
           - path: /
             pathType: Prefix
             backend:
               service:
-                name: transcriber-ingress
+                name: asr-api-ingress
                 port:
                   number: 8443

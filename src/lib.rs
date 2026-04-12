@@ -141,7 +141,7 @@ pub async fn run(config: AppConfig) -> Result<()> {
         upload_response_worker_id = %config.upload_response_worker_id,
         upload_response_discovery_dns = ?config.upload_response_discovery_dns,
         upload_response_ingress_urls = ?config.upload_response_ingress_urls,
-        "transcriber ready"
+        "asr-api ready"
     );
 
     tokio::signal::ctrl_c().await?;

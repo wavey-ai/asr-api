@@ -1,24 +1,28 @@
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: transcriber-worker-config
-  namespace: transcriber
+  name: asr-api-worker-config
+  namespace: asr-api
 data:
-  TRANSCRIBER_ROLE: worker
+  ASR_API_ROLE: worker
   PORT: "8443"
   ENABLE_H3: "false"
-  ASR_MODEL_DIR: /var/lib/transcriber/models/parakeet-tdt
+  ASR_MODEL_DIR: /var/lib/asr-api/models/parakeet-tdt
   ASR_DEVICE_IDS: "0"
   ASR_TORCH_SESSIONS: "2"
   ASR_ONNX_SESSIONS: "2"
+  ASR_ONNX_TRT_COMPONENTS: none
+  ASR_ONNX_TRT_FP16: "true"
+  ASR_ONNX_TRT_BUILDER_OPT_LEVEL: "5"
+  ASR_ONNX_TRT_WORKSPACE_BYTES: "4294967296"
   CHUNK_SECONDS: "30"
   OVERLAP_SECONDS: "2"
   FINAL_MIN_SECONDS: "0.5"
   UTT_SPLIT_SECONDS: "0.8"
-  UPLOAD_RESPONSE_WORKER_ID: transcriber-gpu-worker
+  UPLOAD_RESPONSE_WORKER_ID: asr-api-gpu-worker
   UPLOAD_RESPONSE_WORKER_POLL_MS: "2"
   UPLOAD_RESPONSE_MAX_INFLIGHT: "2"
-  UPLOAD_RESPONSE_DISCOVERY_DNS: transcriber-ingress-internal.transcriber.svc.cluster.local:8443
+  UPLOAD_RESPONSE_DISCOVERY_DNS: asr-api-ingress-internal.asr-api.svc.cluster.local:8443
   UPLOAD_RESPONSE_DISCOVERY_INTERVAL_MS: "2000"
   UPLOAD_RESPONSE_INSECURE_TLS: "true"
-  RUST_LOG: transcriber=info,web_service=info,upload_response=info
+  RUST_LOG: asr_api=info,web_service=info,upload_response=info

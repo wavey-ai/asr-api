@@ -1,6 +1,6 @@
-# transcriber
+# asr-api
 
-`transcriber` serves Deepgram-style prerecorded transcription over Wavey's `web-service` stack.
+`asr-api` serves Deepgram-style prerecorded transcription over Wavey's `web-service` stack.
 
 It now supports three runtime roles:
 
@@ -27,7 +27,7 @@ The split is deliberate:
 - `ASR_DEVICE_IDS`: comma-separated GPU ids, default `0`
 - `ASR_TORCH_SESSIONS`: featurizer sessions per device, default `1`
 - `ASR_ONNX_SESSIONS`: decoder sessions per device, default `1`
-- `TRANSCRIBER_ROLE`: `monolith`, `ingress`, or `worker`
+- `ASR_API_ROLE`: `monolith`, `ingress`, or `worker`
 - `PORT`: TLS port, default `8443`
 - `ENABLE_H3`: enable HTTP/3 in addition to HTTP/2
 - `TLS_CERT_PATH` / `TLS_KEY_PATH`: optional PEM paths; if omitted the workspace's default local TLS material is used
@@ -42,7 +42,7 @@ The split is deliberate:
 - `UPLOAD_RESPONSE_WATCH_POLL_MS`: response watcher poll interval, default `1`
 - `UPLOAD_RESPONSE_WORKER_POLL_MS`: local worker poll interval for cached streams, default `2`
 - `UPLOAD_RESPONSE_MAX_INFLIGHT`: max simultaneously claimed cached streams for the monolith worker, default `2`
-- `UPLOAD_RESPONSE_WORKER_ID`: local worker identity for cache claims, default `transcriber-monolith`
+- `UPLOAD_RESPONSE_WORKER_ID`: local worker identity for cache claims, default `asr-api-monolith`
 - `UPLOAD_RESPONSE_INGRESS_URLS`: optional comma-separated ingress origins for worker mode
 - `UPLOAD_RESPONSE_DISCOVERY_DNS`: optional `host:port` to resolve into ingress pod IPs for worker mode
 - `UPLOAD_RESPONSE_DISCOVERY_INTERVAL_MS`: ingress discovery refresh interval, default `2000`
@@ -149,7 +149,9 @@ The checked-in Kubernetes shape is now split:
 - image workflow: `.github/workflows/build-image.yml`
 - deploy workflow: `.github/workflows/deploy-main.yml`
 
-The worker image expects CUDA plus Python-installed PyTorch 2.7 at runtime so `tch` can load the traced featurizer modules. The build workflow also needs a repo secret named `WAVEY_AI_GH_TOKEN` so Docker can fetch the private `asr-onnx`, `asr-torch`, and `soundkit` dependencies during image build.
+The worker image expects CUDA plus Python-installed PyTorch 2.7 at runtime so `tch` can load the traced featurizer modules. The checked-in worker ConfigMap leaves TensorRT disabled (`ASR_ONNX_TRT_COMPONENTS=none`) for the baseline CUDA deployment. Once the TensorRT-enabled image path is ready, switch that value to `encoder,joint_enc` or another explicit component set.
+
+The build workflow also needs a repo secret named `WAVEY_AI_GH_TOKEN` so Docker can fetch the private `asr-onnx`, `asr-torch`, and `soundkit` dependencies during image build.
 
 See also:
 

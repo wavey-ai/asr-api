@@ -39,11 +39,11 @@ impl AppRole {
 
 #[derive(Debug, Clone, Parser)]
 #[command(
-    name = "transcriber",
+    name = "asr-api",
     about = "Deepgram-compatible ASR service over Wavey's web-service stack"
 )]
 pub struct AppConfig {
-    #[arg(long, env = "TRANSCRIBER_ROLE", value_enum, default_value_t = AppRole::Monolith)]
+    #[arg(long, env = "ASR_API_ROLE", value_enum, default_value_t = AppRole::Monolith)]
     pub role: AppRole,
 
     #[arg(long, env = "RUST_LOG", default_value = "info")]
@@ -133,7 +133,7 @@ pub struct AppConfig {
     #[arg(
         long,
         env = "UPLOAD_RESPONSE_WORKER_ID",
-        default_value = "transcriber-monolith"
+        default_value = "asr-api-monolith"
     )]
     pub upload_response_worker_id: String,
 
@@ -300,7 +300,7 @@ impl AppConfig {
         let model_dir = self
             .model_dir
             .as_deref()
-            .ok_or_else(|| anyhow::anyhow!("ASR_MODEL_DIR is required for this transcriber role"))?;
+            .ok_or_else(|| anyhow::anyhow!("ASR_MODEL_DIR is required for this asr-api role"))?;
         anyhow::ensure!(model_dir.is_dir(), "ASR_MODEL_DIR must point to a directory");
         Ok(model_dir)
     }

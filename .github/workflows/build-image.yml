@@ -1,4 +1,4 @@
-name: Build Transcriber Image
+name: Build Asr API Image
 
 on:
   push:
@@ -18,12 +18,12 @@ permissions:
   packages: write
 
 concurrency:
-  group: build-transcriber-image-${{ github.ref }}
+  group: build-asr-api-image-${{ github.ref }}
   cancel-in-progress: true
 
 env:
   REGISTRY: ghcr.io
-  TRANSCRIBER_IMAGE: ghcr.io/wavey-ai/transcriber
+  ASR_API_IMAGE: ghcr.io/wavey-ai/asr-api
 
 jobs:
   build:
@@ -47,7 +47,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ${{ env.TRANSCRIBER_IMAGE }}
+          images: ${{ env.ASR_API_IMAGE }}
           tags: |
             type=raw,value=main,enable={{is_default_branch}}
             type=raw,value=latest,enable={{is_default_branch}}
@@ -63,10 +63,10 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: |
-            type=gha,scope=transcriber
-            type=registry,ref=${{ env.TRANSCRIBER_IMAGE }}:buildcache
+            type=gha,scope=asr-api
+            type=registry,ref=${{ env.ASR_API_IMAGE }}:buildcache
           cache-to: |
-            type=gha,scope=transcriber,mode=max
-            type=registry,ref=${{ env.TRANSCRIBER_IMAGE }}:buildcache,mode=max
+            type=gha,scope=asr-api,mode=max
+            type=registry,ref=${{ env.ASR_API_IMAGE }}:buildcache,mode=max
           secrets: |
             github_token=${{ secrets.WAVEY_AI_GH_TOKEN }}

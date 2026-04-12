@@ -1,12 +1,12 @@
 apiVersion: v1
 kind: Service
 metadata:
-  name: transcriber-ingress
-  namespace: transcriber
+  name: asr-api-ingress
+  namespace: asr-api
 spec:
   type: ClusterIP
   selector:
-    app.kubernetes.io/name: transcriber-ingress
+    app.kubernetes.io/name: asr-api-ingress
   ports:
     - name: https
       port: 8443
@@ -15,12 +15,12 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: transcriber-ingress-internal
-  namespace: transcriber
+  name: asr-api-ingress-internal
+  namespace: asr-api
 spec:
   clusterIP: None
   selector:
-    app.kubernetes.io/name: transcriber-ingress
+    app.kubernetes.io/name: asr-api-ingress
   ports:
     - name: https
       port: 8443

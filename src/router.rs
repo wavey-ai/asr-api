@@ -24,7 +24,7 @@ impl AppRouter {
         Ok(HandlerResponse {
             status: StatusCode::OK,
             body: Some(Bytes::from(
-                "{\"status\":\"ok\",\"service\":\"transcriber\"}",
+                "{\"status\":\"ok\",\"service\":\"asr-api\"}",
             )),
             content_type: Some("application/json".into()),
             headers: vec![("cache-control".into(), "no-store".into())],

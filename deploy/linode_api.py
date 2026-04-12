@@ -124,6 +124,75 @@ def command_cluster_kubeconfig(args: argparse.Namespace) -> int:
   return 0
 
 
+def resolve_domain_id(token: str, domain_name: str) -> int:
+  domains = list_paginated(token, "/domains")
+  for domain in domains:
+    if domain.get("domain") == domain_name:
+      return int(domain["id"])
+  raise SystemExit(f"Could not find Linode domain: {domain_name}")
+
+
+def command_upsert_domain_a_record(args: argparse.Namespace) -> int:
+  token = required_env("LINODE_TOKEN")
+  domain_id = resolve_domain_id(token, args.domain)
+  records = list_paginated(token, f"/domains/{domain_id}/records")
+
+  matching = [
+    record for record in records
+    if record.get("type") == "A" and record.get("name") == args.name
+  ]
+
+  payload = {
+    "type": "A",
+    "name": args.name,
+    "target": args.target,
+    "ttl_sec": args.ttl_sec,
+  }
+
+  if matching:
+    first = matching[0]
+    record_id = int(first["id"])
+    linode_request(
+      token,
+      f"/domains/{domain_id}/records/{record_id}",
+      method="PUT",
+      payload=payload,
+    )
+    for duplicate in matching[1:]:
+      linode_request(
+        token,
+        f"/domains/{domain_id}/records/{int(duplicate['id'])}",
+        method="DELETE",
+      )
+    print(json.dumps({
+      "domain_id": domain_id,
+      "record_id": record_id,
+      "domain": args.domain,
+      "name": args.name,
+      "target": args.target,
+      "ttl_sec": args.ttl_sec,
+      "action": "updated",
+    }))
+    return 0
+
+  response = linode_request(
+    token,
+    f"/domains/{domain_id}/records",
+    method="POST",
+    payload=payload,
+  )
+  print(json.dumps({
+    "domain_id": domain_id,
+    "record_id": int(response["id"]),
+    "domain": args.domain,
+    "name": args.name,
+    "target": args.target,
+    "ttl_sec": args.ttl_sec,
+    "action": "created",
+  }))
+  return 0
+
+
 def command_create_object_key(args: argparse.Namespace) -> int:
   token = required_env("LINODE_TOKEN")
   payload = {
@@ -202,6 +271,13 @@ def build_parser() -> argparse.ArgumentParser:
   delete_object_key = subparsers.add_parser("delete-object-key")
   delete_object_key.add_argument("--id", dest="key_id", required=True)
   delete_object_key.set_defaults(func=command_delete_object_key)
+
+  upsert_domain_a_record = subparsers.add_parser("upsert-domain-a-record")
+  upsert_domain_a_record.add_argument("--domain", required=True)
+  upsert_domain_a_record.add_argument("--name", required=True)
+  upsert_domain_a_record.add_argument("--target", required=True)
+  upsert_domain_a_record.add_argument("--ttl-sec", type=int, default=30)
+  upsert_domain_a_record.set_defaults(func=command_upsert_domain_a_record)
 
   return parser
 

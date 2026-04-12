@@ -2,7 +2,7 @@
 
 ## Goal
 
-Deploy `transcriber` across multiple GPU nodes so uploads can land on any ingress replica and GPU-backed workers can scale horizontally across one or more Ada 4000 nodes.
+Deploy `asr-api` across multiple GPU nodes so uploads can land on any ingress replica and GPU-backed workers can scale horizontally across one or more Ada 4000 nodes.
 
 ## Current constraint
 
@@ -86,7 +86,7 @@ That avoids repeated multi-gigabyte model downloads per pod and keeps cold start
 
 ## Practical rollout order
 
-1. Refactor `transcriber` so the current inline request path becomes a worker that can consume `upload-response` streams.
+1. Refactor `asr-api` so the current inline request path becomes a worker that can consume `upload-response` streams.
 2. Split CPU ingress from GPU workers over the internal cache API.
 3. Add a model-cache DaemonSet for GPU nodes when cold starts matter.
 4. Externalize PCM/job manifests only if the internal cache handoff becomes the bottleneck.

@@ -1,8 +1,8 @@
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
-  name: transcriber-model
-  namespace: transcriber
+  name: asr-api-model
+  namespace: asr-api
 spec:
   accessModes:
     - ReadWriteOnce

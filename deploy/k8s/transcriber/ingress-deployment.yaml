@@ -1,26 +1,26 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: transcriber-ingress
-  namespace: transcriber
+  name: asr-api-ingress
+  namespace: asr-api
   labels:
-    app.kubernetes.io/name: transcriber-ingress
+    app.kubernetes.io/name: asr-api-ingress
     app.kubernetes.io/component: ingress
-    app.kubernetes.io/part-of: transcriber
+    app.kubernetes.io/part-of: asr-api
 spec:
   replicas: 2
   revisionHistoryLimit: 2
   selector:
     matchLabels:
-      app.kubernetes.io/name: transcriber-ingress
+      app.kubernetes.io/name: asr-api-ingress
   template:
     metadata:
       labels:
-        app.kubernetes.io/name: transcriber-ingress
+        app.kubernetes.io/name: asr-api-ingress
         app.kubernetes.io/component: ingress
-        app.kubernetes.io/part-of: transcriber
+        app.kubernetes.io/part-of: asr-api
     spec:
-      serviceAccountName: transcriber
+      serviceAccountName: asr-api
       terminationGracePeriodSeconds: 120
       affinity:
         nodeAffinity:
@@ -33,25 +33,25 @@ spec:
                       - g2-gpu-rtx4000a1-s
       containers:
         - name: ingress
-          image: ghcr.io/wavey-ai/transcriber:main
+          image: ghcr.io/wavey-ai/asr-api:main
           imagePullPolicy: IfNotPresent
           ports:
             - name: https
               containerPort: 8443
           envFrom:
             - configMapRef:
-                name: transcriber-ingress-config
+                name: asr-api-ingress-config
             - secretRef:
-                name: transcriber-env
+                name: asr-api-env
                 optional: true
           env:
             - name: TLS_CERT_PATH
-              value: /var/run/transcriber/tls/tls.crt
+              value: /var/run/asr-api/tls/tls.crt
             - name: TLS_KEY_PATH
-              value: /var/run/transcriber/tls/tls.key
+              value: /var/run/asr-api/tls/tls.key
           volumeMounts:
             - name: tls
-              mountPath: /var/run/transcriber/tls
+              mountPath: /var/run/asr-api/tls
               readOnly: true
           startupProbe:
             httpGet:
@@ -86,4 +86,4 @@ spec:
       volumes:
         - name: tls
           secret:
-            secretName: transcriber-tls
+            secretName: asr-api-tls
