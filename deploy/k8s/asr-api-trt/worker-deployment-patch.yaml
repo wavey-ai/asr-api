@@ -8,7 +8,7 @@ spec:
     spec:
       containers:
         - name: worker
-          image: asr-registry.wavey.ai/asr-api-worker:trt-main
+          image: ghcr.io/wavey-ai/asr-api-worker:trt-main
           startupProbe:
             failureThreshold: 120
           volumeMounts:

@@ -10,7 +10,7 @@ Internal naming:
 
 - shared cluster: `wavey-us-ord`
 - namespace: `asr-api`
-- image: `asr-registry.wavey.ai/asr-api-worker`
+- image: `ghcr.io/wavey-ai/asr-api-worker`
 - ingress deployment: `asr-api-ingress`
 - worker deployment: `asr-api-worker`
 
@@ -28,7 +28,7 @@ Internal naming:
 ## Required GitHub secrets
 
 - `LINODE_TOKEN`: token that can read the shared LKE cluster
-- `WAVEY_AI_GH_TOKEN`: token that can clone private Wavey Git dependencies during the Docker build
+- `WAVEY_AI_GH_TOKEN`: classic PAT with package access that can clone private Wavey Git dependencies during Docker build and pull `ghcr.io/wavey-ai/*` images from the cluster
 
 ## Optional GitHub secrets
 

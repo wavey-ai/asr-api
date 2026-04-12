@@ -19,9 +19,9 @@ env:
   ASR_API_CLUSTER_LABEL: wavey-us-ord
   ASR_API_NAMESPACE: asr-api
   ASR_API_DOMAIN: asr.wavey.ai
-  ASR_API_REGISTRY: asr-registry.wavey.ai
-  ASR_API_INGRESS_IMAGE_REPO: asr-registry.wavey.ai/asr-api-ingress
-  ASR_API_WORKER_IMAGE_REPO: asr-registry.wavey.ai/asr-api-worker
+  ASR_API_REGISTRY: ghcr.io
+  ASR_API_INGRESS_IMAGE_REPO: ghcr.io/wavey-ai/asr-api-ingress
+  ASR_API_WORKER_IMAGE_REPO: ghcr.io/wavey-ai/asr-api-worker
   ASR_API_KUSTOMIZE_PATH: deploy/k8s/asr-api
   ASR_API_MODEL_PVC: asr-api-model
   ASR_API_MODEL_ROOT: /var/lib/asr-api/models
@@ -185,8 +185,8 @@ jobs:
           KUBECONFIG: ${{ steps.kubeconfig.outputs.kubeconfig }}
           LINODE_TOKEN: ${{ secrets.LINODE_TOKEN }}
           REGISTRY_SERVER: ${{ env.ASR_API_REGISTRY }}
-          REGISTRY_USERNAME: asr-api
-          REGISTRY_PASSWORD: ${{ secrets.ASR_REGISTRY_PASSWORD }}
+          REGISTRY_USERNAME: jbrough
+          REGISTRY_PASSWORD: ${{ secrets.WAVEY_AI_GH_TOKEN }}
           MODEL_TARBALL_URL: ${{ secrets.ASR_API_MODEL_TARBALL_URL }}
         run: |
           set -euo pipefail

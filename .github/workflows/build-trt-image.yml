@@ -22,17 +22,12 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  REGISTRY: asr-registry.wavey.ai
-  ASR_API_IMAGE: asr-registry.wavey.ai/asr-api-worker
-  ASR_API_LOCAL_CACHE: /var/lib/buildkit-cache/asr-api-trt
+  REGISTRY: ghcr.io
+  ASR_API_IMAGE: ghcr.io/wavey-ai/asr-api-worker
 
 jobs:
   build:
-    runs-on:
-      - self-hosted
-      - linux
-      - x64
-      - asr-api-build
+    runs-on: ubuntu-latest
     timeout-minutes: 90
     steps:
       - name: Check out repository
@@ -40,17 +35,13 @@ jobs:
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
-        with:
-          name: asr-api-builder
-          driver: docker-container
-          keep-state: true
 
-      - name: Log in to asr registry
+      - name: Log in to GHCR
         uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
-          username: asr-api
-          password: ${{ secrets.ASR_REGISTRY_PASSWORD }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Docker metadata
         id: meta
@@ -62,12 +53,6 @@ jobs:
             type=raw,value=trt-latest,enable={{is_default_branch}}
             type=sha,prefix=trt-sha-
 
-      - name: Prepare local build cache
-        run: |
-          set -euo pipefail
-          mkdir -p "${ASR_API_LOCAL_CACHE}"
-          rm -rf "${ASR_API_LOCAL_CACHE}-new"
-
       - name: Build and push TensorRT image
         uses: docker/build-push-action@v6
         with:
@@ -78,19 +63,8 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: |
-            type=local,src=${{ env.ASR_API_LOCAL_CACHE }}
-            type=registry,ref=${{ env.ASR_API_IMAGE }}:trt-buildcache
+            type=gha,scope=asr-api-trt
           cache-to: |
-            type=local,dest=${{ env.ASR_API_LOCAL_CACHE }}-new,mode=max
-            type=registry,ref=${{ env.ASR_API_IMAGE }}:trt-buildcache,mode=max
+            type=gha,scope=asr-api-trt,mode=max
           secrets: |
             github_token=${{ secrets.WAVEY_AI_GH_TOKEN }}
-
-      - name: Promote local build cache
-        if: always()
-        run: |
-          set -euo pipefail
-          if [ -d "${ASR_API_LOCAL_CACHE}-new" ]; then
-            rm -rf "${ASR_API_LOCAL_CACHE}"
-            mv "${ASR_API_LOCAL_CACHE}-new" "${ASR_API_LOCAL_CACHE}"
-          fi

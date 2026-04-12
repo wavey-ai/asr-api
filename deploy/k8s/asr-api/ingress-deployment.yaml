@@ -33,7 +33,7 @@ spec:
                     operator: DoesNotExist
       containers:
         - name: ingress
-          image: asr-registry.wavey.ai/asr-api-ingress:main
+          image: ghcr.io/wavey-ai/asr-api-ingress:main
           imagePullPolicy: IfNotPresent
           ports:
             - name: https

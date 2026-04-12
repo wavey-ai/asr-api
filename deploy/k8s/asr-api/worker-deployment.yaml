@@ -78,7 +78,7 @@ spec:
               mountPath: /var/lib/asr-api/models
       containers:
         - name: worker
-          image: asr-registry.wavey.ai/asr-api-worker:main
+          image: ghcr.io/wavey-ai/asr-api-worker:main
           imagePullPolicy: IfNotPresent
           ports:
             - name: https

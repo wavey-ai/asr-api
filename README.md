@@ -156,7 +156,7 @@ The worker image expects CUDA plus Python-installed PyTorch 2.7 at runtime so `t
 
 `upload-response` cache sizing matters on k8s because `ChunkCache` eagerly allocates its ring buffers. The baseline ingress config uses `16` streams, `32KB` slots, and `1024` slots per stream so the cache is sized for transcoded PCM rather than theoretical multi-GB uploads.
 
-The build workflow also needs a repo secret named `WAVEY_AI_GH_TOKEN` so Docker can fetch the private `asr-onnx`, `asr-torch`, and `soundkit` dependencies during image build.
+The workflows also need a repo secret named `WAVEY_AI_GH_TOKEN` so Docker can fetch the private `asr-onnx`, `asr-torch`, and `soundkit` dependencies during image build, and so the cluster can authenticate to `ghcr.io` for private image pulls.
 
 See also:
 
