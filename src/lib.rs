@@ -1,9 +1,11 @@
+#[cfg(feature = "gpu-backend")]
 pub mod asr;
 pub mod chunking;
 pub mod config;
 pub mod deepgram;
 pub mod ingress;
 pub mod router;
+#[cfg(feature = "gpu-backend")]
 pub mod worker;
 
 use anyhow::{Context, Result};
@@ -14,10 +16,14 @@ use tracing_subscriber::EnvFilter;
 use upload_response::{ResponseWatcher, UploadResponseRouter, UploadResponseService};
 use web_service::{H2H3Server, Server, ServerBuilder};
 
+#[cfg(feature = "gpu-backend")]
 use crate::asr::AsrBackend;
-use crate::config::{AppConfig, AppRole};
+use crate::config::AppConfig;
+#[cfg(feature = "gpu-backend")]
+use crate::config::AppRole;
 use crate::ingress::ListenIngress;
 use crate::router::AppRouter;
+#[cfg(feature = "gpu-backend")]
 use crate::worker::WorkerState;
 
 pub fn init_tracing(rust_log: &str) {
@@ -30,6 +36,14 @@ pub fn init_tracing(rust_log: &str) {
 
 pub async fn run(config: AppConfig) -> Result<()> {
     config.validate()?;
+
+    #[cfg(not(feature = "gpu-backend"))]
+    if config.role.uses_asr_backend() {
+        anyhow::bail!(
+            "this asr-api build does not include the GPU backend; use the worker image for role {:?}",
+            config.role
+        );
+    }
 
     let (cert_b64, key_b64) = config.tls_base64()?;
     let model_dir = if config.role.uses_asr_backend() {
@@ -57,6 +71,7 @@ pub async fn run(config: AppConfig) -> Result<()> {
             .spawn()
     });
 
+    #[cfg(feature = "gpu-backend")]
     let backend = if config.role.uses_asr_backend() {
         Some(Arc::new(AsrBackend::new(
             model_dir
@@ -73,8 +88,10 @@ pub async fn run(config: AppConfig) -> Result<()> {
         None
     };
 
+    #[cfg(feature = "gpu-backend")]
     let worker_state = backend.map(|backend| Arc::new(WorkerState::new(config.clone(), backend)));
 
+    #[cfg(feature = "gpu-backend")]
     let _worker_handle = match config.role {
         AppRole::Monolith => Some(
             worker_state

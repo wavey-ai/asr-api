@@ -23,11 +23,23 @@ concurrency:
 
 env:
   REGISTRY: ghcr.io
-  ASR_API_IMAGE: ghcr.io/wavey-ai/asr-api
-  ASR_API_LOCAL_CACHE: /var/lib/buildkit-cache/asr-api
 
 jobs:
   build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - component: ingress
+            image: ghcr.io/wavey-ai/asr-api-ingress
+            dockerfile: docker/asr-api-ingress.Dockerfile
+            cache_scope: asr-api-ingress
+            local_cache: /var/lib/buildkit-cache/asr-api-ingress
+          - component: worker
+            image: ghcr.io/wavey-ai/asr-api-worker
+            dockerfile: docker/asr-api.Dockerfile
+            cache_scope: asr-api-worker
+            local_cache: /var/lib/buildkit-cache/asr-api-worker
     runs-on:
       - self-hosted
       - linux
@@ -56,7 +68,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ${{ env.ASR_API_IMAGE }}
+          images: ${{ matrix.image }}
           tags: |
             type=raw,value=main,enable={{is_default_branch}}
             type=raw,value=latest,enable={{is_default_branch}}
@@ -65,26 +77,26 @@ jobs:
       - name: Prepare local build cache
         run: |
           set -euo pipefail
-          mkdir -p "${ASR_API_LOCAL_CACHE}"
-          rm -rf "${ASR_API_LOCAL_CACHE}-new"
+          mkdir -p "${{ matrix.local_cache }}"
+          rm -rf "${{ matrix.local_cache }}-new"
 
-      - name: Build and push image
+      - name: Build and push ${{ matrix.component }} image
         uses: docker/build-push-action@v6
         with:
           context: .
-          file: docker/asr-api.Dockerfile
+          file: ${{ matrix.dockerfile }}
           platforms: linux/amd64
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: |
-            type=local,src=${{ env.ASR_API_LOCAL_CACHE }}
-            type=gha,scope=asr-api
-            type=registry,ref=${{ env.ASR_API_IMAGE }}:buildcache
+            type=local,src=${{ matrix.local_cache }}
+            type=gha,scope=${{ matrix.cache_scope }}
+            type=registry,ref=${{ matrix.image }}:buildcache
           cache-to: |
-            type=local,dest=${{ env.ASR_API_LOCAL_CACHE }}-new,mode=max
-            type=gha,scope=asr-api,mode=max
-            type=registry,ref=${{ env.ASR_API_IMAGE }}:buildcache,mode=max
+            type=local,dest=${{ matrix.local_cache }}-new,mode=max
+            type=gha,scope=${{ matrix.cache_scope }},mode=max
+            type=registry,ref=${{ matrix.image }}:buildcache,mode=max
           secrets: |
             github_token=${{ secrets.WAVEY_AI_GH_TOKEN }}
 
@@ -92,7 +104,7 @@ jobs:
         if: always()
         run: |
           set -euo pipefail
-          if [ -d "${ASR_API_LOCAL_CACHE}-new" ]; then
-            rm -rf "${ASR_API_LOCAL_CACHE}"
-            mv "${ASR_API_LOCAL_CACHE}-new" "${ASR_API_LOCAL_CACHE}"
+          if [ -d "${{ matrix.local_cache }}-new" ]; then
+            rm -rf "${{ matrix.local_cache }}"
+            mv "${{ matrix.local_cache }}-new" "${{ matrix.local_cache }}"
           fi

@@ -18,7 +18,8 @@ env:
   ASR_API_CLUSTER_LABEL: wavey
   ASR_API_NAMESPACE: asr-api
   ASR_API_DOMAIN: asr.wavey.ai
-  ASR_API_IMAGE: ghcr.io/wavey-ai/asr-api
+  ASR_API_INGRESS_IMAGE_REPO: ghcr.io/wavey-ai/asr-api-ingress
+  ASR_API_WORKER_IMAGE_REPO: ghcr.io/wavey-ai/asr-api-worker
   ASR_API_KUSTOMIZE_PATH: deploy/k8s/asr-api
   ASR_API_MODEL_PVC: asr-api-model
   ASR_API_MODEL_ROOT: /var/lib/asr-api/models
@@ -142,13 +143,14 @@ jobs:
             return 1
           }
 
-          asr_api_ingress_image="${ASR_API_IMAGE}:main"
-          asr_api_worker_image="${ASR_API_IMAGE}:main"
+          asr_api_ingress_image="${ASR_API_INGRESS_IMAGE_REPO}:main"
+          asr_api_worker_image="${ASR_API_WORKER_IMAGE_REPO}:main"
           if [ "${{ steps.changes.outputs.wait_image }}" = "true" ]; then
             short_sha="${GITHUB_SHA::7}"
-            asr_api_ingress_image="${ASR_API_IMAGE}:sha-${short_sha}"
-            asr_api_worker_image="${ASR_API_IMAGE}:sha-${short_sha}"
+            asr_api_ingress_image="${ASR_API_INGRESS_IMAGE_REPO}:sha-${short_sha}"
+            asr_api_worker_image="${ASR_API_WORKER_IMAGE_REPO}:sha-${short_sha}"
             wait_for_image "$asr_api_ingress_image"
+            wait_for_image "$asr_api_worker_image"
           fi
 
           ASR_API_INGRESS_IMAGE="$asr_api_ingress_image" \

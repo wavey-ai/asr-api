@@ -116,7 +116,9 @@ impl WorkerState {
                 let worker_id = self.config.upload_response_worker_id.clone();
                 tasks.spawn(async move {
                     let stream_id = stream.stream_id;
-                    let result = worker.process_cached_stream(service.clone(), stream_id).await;
+                    let result = worker
+                        .process_cached_stream(service.clone(), stream_id)
+                        .await;
                     if let Err(error) = result {
                         error!(stream_id, error = %error, "cached transcription failed");
                         let response = error_response(classify_error(&error), error.to_string());
@@ -346,7 +348,9 @@ impl WorkerState {
         origin: &str,
         stream_id: u64,
     ) -> Result<()> {
-        let (request, prepared) = self.transcribe_remote_upload(client, origin, stream_id).await?;
+        let (request, prepared) = self
+            .transcribe_remote_upload(client, origin, stream_id)
+            .await?;
         let options = ListenOptions::from_query(request.uri().query(), &self.config);
         let fallback_transcript = prepared.fallback_fragments.join(" ");
         let payload = build_response(
@@ -358,7 +362,9 @@ impl WorkerState {
             &options,
         );
         let response = json_response(StatusCode::OK, &payload)?;
-        client.write_handler_response(origin, stream_id, response).await?;
+        client
+            .write_handler_response(origin, stream_id, response)
+            .await?;
         Ok(())
     }
 
@@ -434,7 +440,10 @@ impl WorkerState {
             last_slot = current_last;
         }
 
-        anyhow::ensure!(received_bytes > 0, "request body did not include audio bytes");
+        anyhow::ensure!(
+            received_bytes > 0,
+            "request body did not include audio bytes"
+        );
         let request = request.ok_or_else(|| anyhow::anyhow!("request headers were missing"))?;
         self.process_ready_windows(
             &mut chunker,
@@ -531,7 +540,10 @@ impl WorkerState {
             last_slot = current_last;
         }
 
-        anyhow::ensure!(received_bytes > 0, "request body did not include audio bytes");
+        anyhow::ensure!(
+            received_bytes > 0,
+            "request body did not include audio bytes"
+        );
         let request = request.ok_or_else(|| anyhow::anyhow!("request headers were missing"))?;
         self.process_ready_windows(
             &mut chunker,
@@ -828,10 +840,9 @@ impl RemoteIngressClient {
             .await
             .map_err(|error| anyhow::anyhow!("failed to list streams from {origin}: {error}"))?;
         let status = response.status();
-        let body = response
-            .text()
-            .await
-            .map_err(|error| anyhow::anyhow!("failed to read stream list from {origin}: {error}"))?;
+        let body = response.text().await.map_err(|error| {
+            anyhow::anyhow!("failed to read stream list from {origin}: {error}")
+        })?;
         anyhow::ensure!(
             status.is_success(),
             "unexpected stream list status {status} from {origin}: {body}"
@@ -850,9 +861,9 @@ impl RemoteIngressClient {
                 stream_id: fields[0]
                     .parse()
                     .map_err(|error| anyhow::anyhow!("invalid stream id in {origin}: {error}"))?,
-                request_last: fields[2]
-                    .parse()
-                    .map_err(|error| anyhow::anyhow!("invalid request_last in {origin}: {error}"))?,
+                request_last: fields[2].parse().map_err(|error| {
+                    anyhow::anyhow!("invalid request_last in {origin}: {error}")
+                })?,
                 response_owner: match fields[5] {
                     "" | "-" => None,
                     value => Some(value.to_string()),
@@ -870,19 +881,20 @@ impl RemoteIngressClient {
             ))
             .send()
             .await
-            .map_err(|error| anyhow::anyhow!("failed to read request_last for {stream_id}: {error}"))?;
+            .map_err(|error| {
+                anyhow::anyhow!("failed to read request_last for {stream_id}: {error}")
+            })?;
         let status = response.status();
-        let body = response
-            .text()
-            .await
-            .map_err(|error| anyhow::anyhow!("failed to read request_last body for {stream_id}: {error}"))?;
+        let body = response.text().await.map_err(|error| {
+            anyhow::anyhow!("failed to read request_last body for {stream_id}: {error}")
+        })?;
         anyhow::ensure!(
             status.is_success(),
             "unexpected request_last status {status} for stream {stream_id}: {body}"
         );
-        body.trim()
-            .parse()
-            .map_err(|error| anyhow::anyhow!("invalid request_last for stream {stream_id}: {error}"))
+        body.trim().parse().map_err(|error| {
+            anyhow::anyhow!("invalid request_last for stream {stream_id}: {error}")
+        })
     }
 
     async fn request_slot(
@@ -898,7 +910,9 @@ impl RemoteIngressClient {
             ))
             .send()
             .await
-            .map_err(|error| anyhow::anyhow!("failed to fetch stream {stream_id} slot {slot_id}: {error}"))?;
+            .map_err(|error| {
+                anyhow::anyhow!("failed to fetch stream {stream_id} slot {slot_id}: {error}")
+            })?;
         if response.status() == ReqwestStatusCode::NOT_FOUND {
             return Ok(None);
         }
@@ -909,10 +923,9 @@ impl RemoteIngressClient {
             .and_then(|value| value.to_str().ok())
             .unwrap_or("body")
             .to_string();
-        let body = response
-            .bytes()
-            .await
-            .map_err(|error| anyhow::anyhow!("failed to read stream {stream_id} slot {slot_id}: {error}"))?;
+        let body = response.bytes().await.map_err(|error| {
+            anyhow::anyhow!("failed to read stream {stream_id} slot {slot_id}: {error}")
+        })?;
         anyhow::ensure!(
             status.is_success(),
             "unexpected slot status {status} for stream {stream_id} slot {slot_id}"
@@ -933,7 +946,9 @@ impl RemoteIngressClient {
             ))
             .send()
             .await
-            .map_err(|error| anyhow::anyhow!("failed to register reader for {stream_id}: {error}"))?;
+            .map_err(|error| {
+                anyhow::anyhow!("failed to register reader for {stream_id}: {error}")
+            })?;
         anyhow::ensure!(
             response.status().is_success() || response.status() == ReqwestStatusCode::NO_CONTENT,
             "reader registration failed for stream {stream_id} with status {}",
@@ -942,12 +957,7 @@ impl RemoteIngressClient {
         Ok(())
     }
 
-    async fn unregister_reader(
-        &self,
-        origin: &str,
-        stream_id: u64,
-        worker_id: &str,
-    ) -> Result<()> {
+    async fn unregister_reader(&self, origin: &str, stream_id: u64, worker_id: &str) -> Result<()> {
         let response = self
             .client
             .delete(format!(
@@ -955,7 +965,9 @@ impl RemoteIngressClient {
             ))
             .send()
             .await
-            .map_err(|error| anyhow::anyhow!("failed to unregister reader for {stream_id}: {error}"))?;
+            .map_err(|error| {
+                anyhow::anyhow!("failed to unregister reader for {stream_id}: {error}")
+            })?;
         anyhow::ensure!(
             response.status().is_success()
                 || response.status() == ReqwestStatusCode::NO_CONTENT
@@ -980,10 +992,14 @@ impl RemoteIngressClient {
             ))
             .send()
             .await
-            .map_err(|error| anyhow::anyhow!("failed to claim response for {stream_id}: {error}"))?;
+            .map_err(|error| {
+                anyhow::anyhow!("failed to claim response for {stream_id}: {error}")
+            })?;
         match response.status() {
             ReqwestStatusCode::OK => Ok(true),
-            ReqwestStatusCode::CONFLICT | ReqwestStatusCode::NO_CONTENT | ReqwestStatusCode::NOT_FOUND => Ok(false),
+            ReqwestStatusCode::CONFLICT
+            | ReqwestStatusCode::NO_CONTENT
+            | ReqwestStatusCode::NOT_FOUND => Ok(false),
             status => {
                 let body = response.text().await.unwrap_or_default();
                 Err(anyhow::anyhow!(
@@ -993,12 +1009,7 @@ impl RemoteIngressClient {
         }
     }
 
-    async fn release_response(
-        &self,
-        origin: &str,
-        stream_id: u64,
-        worker_id: &str,
-    ) -> Result<()> {
+    async fn release_response(&self, origin: &str, stream_id: u64, worker_id: &str) -> Result<()> {
         let response = self
             .client
             .delete(format!(
@@ -1006,7 +1017,9 @@ impl RemoteIngressClient {
             ))
             .send()
             .await
-            .map_err(|error| anyhow::anyhow!("failed to release response for {stream_id}: {error}"))?;
+            .map_err(|error| {
+                anyhow::anyhow!("failed to release response for {stream_id}: {error}")
+            })?;
         anyhow::ensure!(
             response.status().is_success()
                 || response.status() == ReqwestStatusCode::CONFLICT
@@ -1096,7 +1109,10 @@ impl RemoteIngressClient {
         let response = response.map_err(|error| anyhow::anyhow!("{context}: {error}"))?;
         let status = response.status();
         let body = response.text().await.unwrap_or_default();
-        anyhow::ensure!(status.is_success(), "{context}: unexpected status {status}: {body}");
+        anyhow::ensure!(
+            status.is_success(),
+            "{context}: unexpected status {status}: {body}"
+        );
         Ok(())
     }
 }

@@ -1,9 +1,9 @@
+use crate::ingress::ListenIngress;
 use async_trait::async_trait;
 use bytes::Bytes;
 use http::{Method, Request, StatusCode};
 use std::sync::Arc;
 use upload_response::UploadResponseRouter;
-use crate::ingress::ListenIngress;
 use web_service::{
     BodyStream, HandlerResponse, HandlerResult, Router, ServerError, StreamWriter,
     WebSocketHandler, WebTransportHandler,
@@ -16,16 +16,17 @@ pub struct AppRouter {
 }
 
 impl AppRouter {
-    pub fn new(upload: Option<Arc<UploadResponseRouter>>, listen: Option<Arc<ListenIngress>>) -> Self {
+    pub fn new(
+        upload: Option<Arc<UploadResponseRouter>>,
+        listen: Option<Arc<ListenIngress>>,
+    ) -> Self {
         Self { upload, listen }
     }
 
     async fn handle_health(&self) -> HandlerResult<HandlerResponse> {
         Ok(HandlerResponse {
             status: StatusCode::OK,
-            body: Some(Bytes::from(
-                "{\"status\":\"ok\",\"service\":\"asr-api\"}",
-            )),
+            body: Some(Bytes::from("{\"status\":\"ok\",\"service\":\"asr-api\"}")),
             content_type: Some("application/json".into()),
             headers: vec![("cache-control".into(), "no-store".into())],
             etag: None,
@@ -68,7 +69,9 @@ impl Router for AppRouter {
             (&Method::GET, "/") | (&Method::GET, "/health") | (&Method::GET, "/healthz") => {
                 self.handle_health().await
             }
-            (&Method::OPTIONS, "/v1/listen") if self.listen.is_some() => self.handle_options().await,
+            (&Method::OPTIONS, "/v1/listen") if self.listen.is_some() => {
+                self.handle_options().await
+            }
             _ if Self::is_upload_path(req.uri().path()) => {
                 if let Some(upload) = &self.upload {
                     upload.route(req).await

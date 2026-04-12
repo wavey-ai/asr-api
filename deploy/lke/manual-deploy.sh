@@ -9,8 +9,8 @@ set -euo pipefail
 ASR_API_NAMESPACE="${ASR_API_NAMESPACE:-asr-api}"
 ASR_API_DOMAIN="${ASR_API_DOMAIN:-asr.wavey.ai}"
 ASR_API_KUSTOMIZE_PATH="${ASR_API_KUSTOMIZE_PATH:-deploy/k8s/asr-api}"
-ASR_API_INGRESS_IMAGE="${ASR_API_INGRESS_IMAGE:-ghcr.io/wavey-ai/asr-api:main}"
-ASR_API_WORKER_IMAGE="${ASR_API_WORKER_IMAGE:-$ASR_API_INGRESS_IMAGE}"
+ASR_API_INGRESS_IMAGE="${ASR_API_INGRESS_IMAGE:-ghcr.io/wavey-ai/asr-api-ingress:main}"
+ASR_API_WORKER_IMAGE="${ASR_API_WORKER_IMAGE:-ghcr.io/wavey-ai/asr-api-worker:main}"
 ASR_API_MODEL_PVC="${ASR_API_MODEL_PVC:-asr-api-model}"
 MODEL_TARBALL_URL="${MODEL_TARBALL_URL:-}"
 

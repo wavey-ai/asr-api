@@ -23,7 +23,7 @@ concurrency:
 
 env:
   REGISTRY: ghcr.io
-  ASR_API_IMAGE: ghcr.io/wavey-ai/asr-api
+  ASR_API_IMAGE: ghcr.io/wavey-ai/asr-api-worker
   ASR_API_LOCAL_CACHE: /var/lib/buildkit-cache/asr-api-trt
 
 jobs:

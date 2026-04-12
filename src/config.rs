@@ -99,35 +99,23 @@ pub struct AppConfig {
     #[arg(long, env = "UPLOAD_RESPONSE_SLOT_SIZE_KB", default_value_t = 32)]
     pub upload_response_slot_size_kb: usize,
 
-    #[arg(long, env = "UPLOAD_RESPONSE_SLOTS_PER_STREAM", default_value_t = 1_024)]
+    #[arg(
+        long,
+        env = "UPLOAD_RESPONSE_SLOTS_PER_STREAM",
+        default_value_t = 1_024
+    )]
     pub upload_response_slots_per_stream: usize,
 
-    #[arg(
-        long,
-        env = "UPLOAD_RESPONSE_TIMEOUT_MS",
-        default_value_t = 30_000
-    )]
+    #[arg(long, env = "UPLOAD_RESPONSE_TIMEOUT_MS", default_value_t = 30_000)]
     pub upload_response_timeout_ms: u64,
 
-    #[arg(
-        long,
-        env = "UPLOAD_RESPONSE_WATCH_POLL_MS",
-        default_value_t = 1
-    )]
+    #[arg(long, env = "UPLOAD_RESPONSE_WATCH_POLL_MS", default_value_t = 1)]
     pub upload_response_watch_poll_ms: u64,
 
-    #[arg(
-        long,
-        env = "UPLOAD_RESPONSE_WORKER_POLL_MS",
-        default_value_t = 2
-    )]
+    #[arg(long, env = "UPLOAD_RESPONSE_WORKER_POLL_MS", default_value_t = 2)]
     pub upload_response_worker_poll_ms: u64,
 
-    #[arg(
-        long,
-        env = "UPLOAD_RESPONSE_MAX_INFLIGHT",
-        default_value_t = 2
-    )]
+    #[arg(long, env = "UPLOAD_RESPONSE_MAX_INFLIGHT", default_value_t = 2)]
     pub upload_response_max_inflight: usize,
 
     #[arg(
@@ -301,7 +289,10 @@ impl AppConfig {
             .model_dir
             .as_deref()
             .ok_or_else(|| anyhow::anyhow!("ASR_MODEL_DIR is required for this asr-api role"))?;
-        anyhow::ensure!(model_dir.is_dir(), "ASR_MODEL_DIR must point to a directory");
+        anyhow::ensure!(
+            model_dir.is_dir(),
+            "ASR_MODEL_DIR must point to a directory"
+        );
         Ok(model_dir)
     }
 

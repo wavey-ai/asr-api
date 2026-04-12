@@ -33,7 +33,7 @@ spec:
                       - g2-gpu-rtx4000a1-s
       containers:
         - name: ingress
-          image: ghcr.io/wavey-ai/asr-api:main
+          image: ghcr.io/wavey-ai/asr-api-ingress:main
           imagePullPolicy: IfNotPresent
           ports:
             - name: https

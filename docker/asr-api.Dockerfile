@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1.7
 
 ARG CUDA_DEVEL_IMAGE=nvidia/cuda:12.8.1-cudnn-devel-ubuntu22.04
-ARG CUDA_RUNTIME_IMAGE=nvidia/cuda:12.8.1-cudnn-runtime-ubuntu22.04
+ARG CUDA_RUNTIME_IMAGE=nvidia/cuda:12.8.1-cudnn-devel-ubuntu22.04
 ARG OPUS_VERSION=1.5.2
 ARG PYTHON_SITE_PACKAGES=/usr/local/lib/python3.10/dist-packages
 ARG TORCH_VERSION=2.7.0
@@ -102,7 +102,7 @@ COPY --from=build /opt/asr-bin/asr-api /usr/local/bin/asr-api
 ENV LIBTORCH_USE_PYTORCH=1
 ENV LIBTORCH_BYPASS_VERSION_CHECK=1
 ENV LIBTORCH=/opt/libtorch
-ENV LD_LIBRARY_PATH=/usr/local/lib:/opt/libtorch/lib:/usr/lib/x86_64-linux-gnu:/usr/local/cuda/lib64
+ENV LD_LIBRARY_PATH=/usr/local/lib:/opt/libtorch/lib:/usr/lib/x86_64-linux-gnu:/usr/local/cuda/lib64:/usr/local/cuda/targets/x86_64-linux/lib
 ENV LD_PRELOAD=/opt/libtorch/lib/libc10_cuda.so:/opt/libtorch/lib/libtorch_cuda.so:/opt/libtorch/lib/libtorch_cuda_linalg.so
 ENV RUST_LOG=asr_api=info,web_service=info,upload_response=info
 
