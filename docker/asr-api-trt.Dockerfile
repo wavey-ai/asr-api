@@ -76,6 +76,8 @@ RUN --mount=type=secret,id=github_token,required=true \
     git config --global url."https://x-access-token:${token}@github.com/".insteadOf "https://github.com/"; \
     cargo build --release --locked; \
     git config --global --unset-all url."https://x-access-token:${token}@github.com/".insteadOf; \
+    mkdir -p /opt/asr-bin; \
+    cp /app/target/release/asr-api /opt/asr-bin/asr-api; \
     mkdir -p /opt/asr-runtime-libs; \
     find /app/target/release \
       \( -name 'libonnxruntime_providers*.so*' -o -name 'libonnxruntime*.so*' \) \
@@ -106,7 +108,7 @@ RUN curl -fsSL "${TENSORRT_REPO_DEB_URL}" -o /tmp/tensorrt.deb \
 COPY --from=build /usr/local/lib/libopus.so* /usr/local/lib/
 COPY --from=build ${PYTHON_SITE_PACKAGES}/torch/lib /opt/libtorch/lib
 COPY --from=build /opt/asr-runtime-libs/ /usr/local/lib/
-COPY --from=build /app/target/release/asr-api /usr/local/bin/asr-api
+COPY --from=build /opt/asr-bin/asr-api /usr/local/bin/asr-api
 
 ENV LIBTORCH_USE_PYTORCH=1
 ENV LIBTORCH_BYPASS_VERSION_CHECK=1
