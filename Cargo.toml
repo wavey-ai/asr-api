@@ -6,7 +6,7 @@ edition = "2021"
 [dependencies]
 anyhow = "1.0"
 async-trait = "0.1"
-asr-onnx = { git = "https://github.com/wavey-ai/asr-onnx.git", rev = "1254584d4838cf20b8a8837e8de1717f2c5907b7" }
+asr-onnx = { git = "https://github.com/wavey-ai/asr-onnx.git", rev = "cb6bfdaf983a7937cfffd7c2dafe2af28c804d46" }
 asr-torch = { git = "https://github.com/wavey-ai/asr-torch.git", rev = "f99c843b694229f34160217db9abea3d39854a64" }
 bytes = "1"
 chrono = { version = "0.4", default-features = false, features = ["clock"] }

@@ -142,10 +142,11 @@ PY
 
 The checked-in Kubernetes shape is now split:
 
-- CPU ingress deployment: `deploy/k8s/transcriber/ingress-deployment.yaml`
-- GPU worker deployment: `deploy/k8s/transcriber/worker-deployment.yaml`
-- public service + headless discovery service: `deploy/k8s/transcriber/services.yaml`
-- image build: `docker/transcriber.Dockerfile`
+- CPU ingress deployment: `deploy/k8s/asr-api/ingress-deployment.yaml`
+- GPU worker deployment: `deploy/k8s/asr-api/worker-deployment.yaml`
+- public service + headless discovery service: `deploy/k8s/asr-api/services.yaml`
+- baseline image build: `docker/asr-api.Dockerfile`
+- fallback source-build image: `docker/asr-api-source.Dockerfile`
 - TensorRT worker image: `docker/asr-api-trt.Dockerfile`
 - TensorRT overlay: `deploy/k8s/asr-api-trt/`
 - image workflow: `.github/workflows/build-image.yml`

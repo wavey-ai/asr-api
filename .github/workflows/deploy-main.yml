@@ -19,7 +19,7 @@ env:
   ASR_API_NAMESPACE: asr-api
   ASR_API_DOMAIN: asr.wavey.ai
   ASR_API_IMAGE: ghcr.io/wavey-ai/asr-api
-  ASR_API_KUSTOMIZE_PATH: deploy/k8s/transcriber
+  ASR_API_KUSTOMIZE_PATH: deploy/k8s/asr-api
   ASR_API_MODEL_PVC: asr-api-model
   ASR_API_MODEL_ROOT: /var/lib/asr-api/models
   ASR_API_MODEL_DIR: /var/lib/asr-api/models/parakeet-tdt
@@ -52,7 +52,7 @@ jobs:
           set -euo pipefail
           cargo metadata --locked --no-deps >/dev/null
           python3 -m py_compile deploy/linode_api.py
-          kubectl kustomize deploy/k8s/transcriber >/dev/null
+          kubectl kustomize "$ASR_API_KUSTOMIZE_PATH" >/dev/null
 
       - name: Detect image changes
         id: changes
@@ -125,7 +125,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          kubectl apply -f deploy/k8s/transcriber/namespace.yaml
+          kubectl apply -f "$ASR_API_KUSTOMIZE_PATH/namespace.yaml"
 
           openssl req -x509 -nodes -newkey rsa:2048 -sha256 \
             -keyout "$RUNNER_TEMP/asr-api.key" \
@@ -182,7 +182,7 @@ jobs:
             wait_for_image "$asr_api_ingress_image"
           fi
 
-          kubectl apply -f deploy/k8s/transcriber/pvc.yaml
+          kubectl apply -f "$ASR_API_KUSTOMIZE_PATH/pvc.yaml"
 
           if [ -n "${MODEL_TARBALL_URL}" ]; then
             kubectl -n "$ASR_API_NAMESPACE" delete job asr-api-model-sync --ignore-not-found=true --wait=true || true

@@ -8,7 +8,7 @@ set -euo pipefail
 
 ASR_API_NAMESPACE="${ASR_API_NAMESPACE:-asr-api}"
 ASR_API_DOMAIN="${ASR_API_DOMAIN:-asr.wavey.ai}"
-ASR_API_KUSTOMIZE_PATH="${ASR_API_KUSTOMIZE_PATH:-deploy/k8s/transcriber}"
+ASR_API_KUSTOMIZE_PATH="${ASR_API_KUSTOMIZE_PATH:-deploy/k8s/asr-api}"
 ASR_API_INGRESS_IMAGE="${ASR_API_INGRESS_IMAGE:-ghcr.io/wavey-ai/asr-api:main}"
 ASR_API_WORKER_IMAGE="${ASR_API_WORKER_IMAGE:-$ASR_API_INGRESS_IMAGE}"
 ASR_API_MODEL_PVC="${ASR_API_MODEL_PVC:-asr-api-model}"
@@ -36,7 +36,7 @@ openssl req -x509 -nodes -newkey rsa:2048 -sha256 \
   -addext "subjectAltName=DNS:${ASR_API_DOMAIN}" \
   >/dev/null 2>&1
 
-kubectl apply -f deploy/k8s/transcriber/namespace.yaml
+kubectl apply -f "${ASR_API_KUSTOMIZE_PATH}/namespace.yaml"
 
 kubectl -n "$ASR_API_NAMESPACE" create secret docker-registry ghcr-wavey-ai \
   --docker-server=ghcr.io \
@@ -54,7 +54,7 @@ kubectl -n "$ASR_API_NAMESPACE" create secret tls asr-wavey-ai-tls \
   --key="$tmpdir/public.key" \
   --dry-run=client -o yaml | kubectl apply -f -
 
-kubectl apply -f deploy/k8s/transcriber/pvc.yaml
+kubectl apply -f "${ASR_API_KUSTOMIZE_PATH}/pvc.yaml"
 
 if [[ -n "$MODEL_TARBALL_URL" ]]; then
   kubectl -n "$ASR_API_NAMESPACE" delete job asr-api-model-sync --ignore-not-found=true --wait=true || true

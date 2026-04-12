@@ -18,10 +18,11 @@ Internal naming:
 
 - image build workflow: `.github/workflows/build-image.yml`
 - deploy workflow: `.github/workflows/deploy-main.yml`
-- Kubernetes manifests: `deploy/k8s/transcriber/`
+- Kubernetes manifests: `deploy/k8s/asr-api/`
 - TensorRT overlay: `deploy/k8s/asr-api-trt/`
 - Linode helper: `deploy/linode_api.py`
-- image build: `docker/transcriber.Dockerfile`
+- baseline image build: `docker/asr-api.Dockerfile`
+- fallback source-build image: `docker/asr-api-source.Dockerfile`
 - TensorRT worker image: `docker/asr-api-trt.Dockerfile`
 
 ## Required GitHub secrets
