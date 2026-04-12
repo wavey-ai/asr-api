@@ -121,6 +121,7 @@ jobs:
       - name: Deploy asr-api to LKE
         env:
           KUBECONFIG: ${{ steps.kubeconfig.outputs.kubeconfig }}
+          LINODE_TOKEN: ${{ secrets.LINODE_TOKEN }}
           GHCR_USERNAME: ${{ github.actor }}
           GHCR_TOKEN: ${{ github.token }}
           MODEL_TARBALL_URL: ${{ secrets.ASR_API_MODEL_TARBALL_URL }}
