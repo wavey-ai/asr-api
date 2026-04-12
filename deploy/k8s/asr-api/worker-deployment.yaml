@@ -23,6 +23,8 @@ spec:
         app.kubernetes.io/part-of: asr-api
     spec:
       serviceAccountName: asr-api
+      imagePullSecrets:
+        - name: ghcr-wavey-ai
       terminationGracePeriodSeconds: 120
       tolerations:
         - key: wavey.ai/gpu

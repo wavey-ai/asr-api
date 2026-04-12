@@ -97,6 +97,13 @@ jobs:
           printf '  %s\n' $changed_files
           echo "wait_image=$wait_image"
 
+      - name: Log in to GHCR for deploy
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: jbrough
+          password: ${{ secrets.WAVEY_AI_GH_TOKEN }}
+
       - name: Resolve LKE cluster
         id: cluster
         env:
@@ -123,8 +130,8 @@ jobs:
         env:
           KUBECONFIG: ${{ steps.kubeconfig.outputs.kubeconfig }}
           LINODE_TOKEN: ${{ secrets.LINODE_TOKEN }}
-          GHCR_USERNAME: ${{ github.actor }}
-          GHCR_TOKEN: ${{ github.token }}
+          GHCR_USERNAME: jbrough
+          GHCR_TOKEN: ${{ secrets.WAVEY_AI_GH_TOKEN }}
           MODEL_TARBALL_URL: ${{ secrets.ASR_API_MODEL_TARBALL_URL }}
         run: |
           set -euo pipefail

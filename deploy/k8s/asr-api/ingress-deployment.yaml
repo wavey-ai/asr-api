@@ -8,7 +8,7 @@ metadata:
     app.kubernetes.io/component: ingress
     app.kubernetes.io/part-of: asr-api
 spec:
-  replicas: 2
+  replicas: 1
   revisionHistoryLimit: 2
   selector:
     matchLabels:
@@ -21,6 +21,8 @@ spec:
         app.kubernetes.io/part-of: asr-api
     spec:
       serviceAccountName: asr-api
+      imagePullSecrets:
+        - name: ghcr-wavey-ai
       terminationGracePeriodSeconds: 120
       affinity:
         nodeAffinity:

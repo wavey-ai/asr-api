@@ -3,7 +3,7 @@ set -euo pipefail
 
 : "${KUBECONFIG:?set KUBECONFIG to the target cluster kubeconfig}"
 : "${LINODE_TOKEN:?set LINODE_TOKEN for Linode DNS updates}"
-: "${GHCR_USERNAME:?set GHCR_USERNAME for ghcr.io pulls}"
+: "${GHCR_USERNAME:=jbrough}"
 : "${GHCR_TOKEN:?set GHCR_TOKEN for ghcr.io pulls}"
 
 ASR_API_NAMESPACE="${ASR_API_NAMESPACE:-asr-api}"
