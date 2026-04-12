@@ -35,9 +35,9 @@ The split is deliberate:
 - `OVERLAP_SECONDS`: overlap between adjacent windows, default `2`
 - `FINAL_MIN_SECONDS`: minimum residual tail to keep, default `0.5`
 - `UTT_SPLIT_SECONDS`: pause threshold used when `utterances=true`, default `0.8`
-- `UPLOAD_RESPONSE_NUM_STREAMS`: in-memory upload-response stream slots, default `128`
-- `UPLOAD_RESPONSE_SLOT_SIZE_KB`: per-slot cache size, default `64`
-- `UPLOAD_RESPONSE_SLOTS_PER_STREAM`: max request/response slots per stream, default `16384`
+- `UPLOAD_RESPONSE_NUM_STREAMS`: in-memory upload-response stream slots, default `16`
+- `UPLOAD_RESPONSE_SLOT_SIZE_KB`: per-slot cache size, default `32`
+- `UPLOAD_RESPONSE_SLOTS_PER_STREAM`: max request/response slots per stream, default `1024`
 - `UPLOAD_RESPONSE_TIMEOUT_MS`: listen request timeout while waiting for the worker response, default `30000`
 - `UPLOAD_RESPONSE_WATCH_POLL_MS`: response watcher poll interval, default `1`
 - `UPLOAD_RESPONSE_WORKER_POLL_MS`: local worker poll interval for cached streams, default `2`
@@ -146,10 +146,14 @@ The checked-in Kubernetes shape is now split:
 - GPU worker deployment: `deploy/k8s/transcriber/worker-deployment.yaml`
 - public service + headless discovery service: `deploy/k8s/transcriber/services.yaml`
 - image build: `docker/transcriber.Dockerfile`
+- TensorRT worker image: `docker/asr-api-trt.Dockerfile`
+- TensorRT overlay: `deploy/k8s/asr-api-trt/`
 - image workflow: `.github/workflows/build-image.yml`
 - deploy workflow: `.github/workflows/deploy-main.yml`
 
-The worker image expects CUDA plus Python-installed PyTorch 2.7 at runtime so `tch` can load the traced featurizer modules. The checked-in worker ConfigMap leaves TensorRT disabled (`ASR_ONNX_TRT_COMPONENTS=none`) for the baseline CUDA deployment. Once the TensorRT-enabled image path is ready, switch that value to `encoder,joint_enc` or another explicit component set.
+The worker image expects CUDA plus Python-installed PyTorch 2.7 at runtime so `tch` can load the traced featurizer modules. The checked-in worker ConfigMap leaves TensorRT disabled (`ASR_ONNX_TRT_COMPONENTS=none`) for the baseline CUDA deployment. The separate `deploy/k8s/asr-api-trt/` overlay enables `encoder,joint_enc`, mounts a TRT engine-cache directory, and points the worker at the TRT-specific image tag.
+
+`upload-response` cache sizing matters on k8s because `ChunkCache` eagerly allocates its ring buffers. The baseline ingress config uses `16` streams, `32KB` slots, and `1024` slots per stream so the cache is sized for transcoded PCM rather than theoretical multi-GB uploads.
 
 The build workflow also needs a repo secret named `WAVEY_AI_GH_TOKEN` so Docker can fetch the private `asr-onnx`, `asr-torch`, and `soundkit` dependencies during image build.
 

@@ -19,6 +19,7 @@ env:
   ASR_API_NAMESPACE: asr-api
   ASR_API_DOMAIN: asr.wavey.ai
   ASR_API_IMAGE: ghcr.io/wavey-ai/asr-api
+  ASR_API_KUSTOMIZE_PATH: deploy/k8s/transcriber
   ASR_API_MODEL_PVC: asr-api-model
   ASR_API_MODEL_ROOT: /var/lib/asr-api/models
   ASR_API_MODEL_DIR: /var/lib/asr-api/models/parakeet-tdt
@@ -172,11 +173,13 @@ jobs:
             return 1
           }
 
-          asr_api_image="${ASR_API_IMAGE}:main"
+          asr_api_ingress_image="${ASR_API_IMAGE}:main"
+          asr_api_worker_image="${ASR_API_IMAGE}:main"
           if [ "${{ steps.changes.outputs.wait_image }}" = "true" ]; then
             short_sha="${GITHUB_SHA::7}"
-            asr_api_image="${ASR_API_IMAGE}:sha-${short_sha}"
-            wait_for_image "$asr_api_image"
+            asr_api_ingress_image="${ASR_API_IMAGE}:sha-${short_sha}"
+            asr_api_worker_image="${ASR_API_IMAGE}:sha-${short_sha}"
+            wait_for_image "$asr_api_ingress_image"
           fi
 
           kubectl apply -f deploy/k8s/transcriber/pvc.yaml
@@ -264,9 +267,9 @@ jobs:
             echo "ASR_API_MODEL_TARBALL_URL not set; skipping model sync job"
           fi
 
-          kubectl apply -k deploy/k8s/transcriber
-          kubectl -n "$ASR_API_NAMESPACE" set image deployment/asr-api-ingress ingress="$asr_api_image"
-          kubectl -n "$ASR_API_NAMESPACE" set image deployment/asr-api-worker worker="$asr_api_image"
+          kubectl apply -k "$ASR_API_KUSTOMIZE_PATH"
+          kubectl -n "$ASR_API_NAMESPACE" set image deployment/asr-api-ingress ingress="$asr_api_ingress_image"
+          kubectl -n "$ASR_API_NAMESPACE" set image deployment/asr-api-worker worker="$asr_api_worker_image"
           kubectl -n "$ASR_API_NAMESPACE" rollout restart deployment/asr-api-ingress
           kubectl -n "$ASR_API_NAMESPACE" rollout restart deployment/asr-api-worker
           kubectl -n "$ASR_API_NAMESPACE" rollout status deployment/asr-api-ingress --timeout=15m

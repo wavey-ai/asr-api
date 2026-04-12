@@ -93,13 +93,13 @@ pub struct AppConfig {
     #[arg(long, env = "UTT_SPLIT_SECONDS", default_value_t = 0.8)]
     pub utt_split_seconds: f64,
 
-    #[arg(long, env = "UPLOAD_RESPONSE_NUM_STREAMS", default_value_t = 128)]
+    #[arg(long, env = "UPLOAD_RESPONSE_NUM_STREAMS", default_value_t = 16)]
     pub upload_response_num_streams: usize,
 
-    #[arg(long, env = "UPLOAD_RESPONSE_SLOT_SIZE_KB", default_value_t = 64)]
+    #[arg(long, env = "UPLOAD_RESPONSE_SLOT_SIZE_KB", default_value_t = 32)]
     pub upload_response_slot_size_kb: usize,
 
-    #[arg(long, env = "UPLOAD_RESPONSE_SLOTS_PER_STREAM", default_value_t = 16_384)]
+    #[arg(long, env = "UPLOAD_RESPONSE_SLOTS_PER_STREAM", default_value_t = 1_024)]
     pub upload_response_slots_per_stream: usize,
 
     #[arg(

@@ -19,8 +19,10 @@ Internal naming:
 - image build workflow: `.github/workflows/build-image.yml`
 - deploy workflow: `.github/workflows/deploy-main.yml`
 - Kubernetes manifests: `deploy/k8s/transcriber/`
+- TensorRT overlay: `deploy/k8s/asr-api-trt/`
 - Linode helper: `deploy/linode_api.py`
 - image build: `docker/transcriber.Dockerfile`
+- TensorRT worker image: `docker/asr-api-trt.Dockerfile`
 
 ## Required GitHub secrets
 
@@ -68,4 +70,5 @@ The deployment init container verifies:
 - `asr-api-ingress-internal` is headless so GPU workers can discover individual ingress pod IPs and use the internal `/_upload_response/...` cache API directly.
 - Audio decode / resample / downmix runs on CPU ingress pods.
 - Featurization stays with ONNX decode on the GPU worker because `asr-torch` loads traced CUDA featurizer modules.
+- The baseline manifests keep TensorRT disabled. Use `deploy/k8s/asr-api-trt/` with the TRT image once you want engine building on the GPU worker.
 - The current LKE cluster has only one GPU node, so `asr-api-worker` competes directly with any other `nvidia.com/gpu: 1` deployment, especially `bitneedle-gpu-api`.

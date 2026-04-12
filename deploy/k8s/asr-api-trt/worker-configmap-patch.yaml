@@ -1,0 +1,9 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: asr-api-worker-config
+  namespace: asr-api
+data:
+  ASR_ONNX_TRT_COMPONENTS: encoder,joint_enc
+  ASR_ONNX_TRT_CACHE_DIR: /var/cache/asr-api-trt
+  ASR_ONNX_TRT_DETAILED_BUILD_LOG: "false"
