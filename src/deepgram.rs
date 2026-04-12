@@ -422,15 +422,17 @@ fn parse_bool(value: &str) -> Option<bool> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::AppRole;
 
     fn test_config() -> AppConfig {
         AppConfig {
+            role: AppRole::Monolith,
             rust_log: "info".into(),
             port: 8443,
             enable_h3: false,
             tls_cert_path: None,
             tls_key_path: None,
-            model_dir: "/tmp/model".into(),
+            model_dir: Some("/tmp/model".into()),
             vocab_path: None,
             device_ids: vec![0],
             torch_sessions: 1,
@@ -447,6 +449,10 @@ mod tests {
             upload_response_worker_poll_ms: 2,
             upload_response_max_inflight: 2,
             upload_response_worker_id: "test-worker".into(),
+            upload_response_ingress_urls: Vec::new(),
+            upload_response_discovery_dns: None,
+            upload_response_discovery_interval_ms: 2_000,
+            upload_response_insecure_tls: false,
         }
     }
 

@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: transcriber-ingress-config
+  namespace: transcriber
+data:
+  TRANSCRIBER_ROLE: ingress
+  PORT: "8443"
+  ENABLE_H3: "false"
+  UPLOAD_RESPONSE_NUM_STREAMS: "256"
+  UPLOAD_RESPONSE_SLOT_SIZE_KB: "64"
+  UPLOAD_RESPONSE_SLOTS_PER_STREAM: "16384"
+  UPLOAD_RESPONSE_TIMEOUT_MS: "300000"
+  UPLOAD_RESPONSE_WATCH_POLL_MS: "1"
+  RUST_LOG: transcriber=info,web_service=info,upload_response=info

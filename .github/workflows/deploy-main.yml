@@ -257,7 +257,10 @@ EOF
           fi
 
           kubectl apply -k deploy/k8s/transcriber
-          kubectl -n "$TRANSCRIBER_NAMESPACE" set image deployment/transcriber transcriber="$transcriber_image"
-          kubectl -n "$TRANSCRIBER_NAMESPACE" rollout restart deployment/transcriber
-          kubectl -n "$TRANSCRIBER_NAMESPACE" rollout status deployment/transcriber --timeout=15m
-          kubectl -n "$TRANSCRIBER_NAMESPACE" get pods,svc,ingress
+          kubectl -n "$TRANSCRIBER_NAMESPACE" set image deployment/transcriber-ingress ingress="$transcriber_image"
+          kubectl -n "$TRANSCRIBER_NAMESPACE" set image deployment/transcriber-worker worker="$transcriber_image"
+          kubectl -n "$TRANSCRIBER_NAMESPACE" rollout restart deployment/transcriber-ingress
+          kubectl -n "$TRANSCRIBER_NAMESPACE" rollout restart deployment/transcriber-worker
+          kubectl -n "$TRANSCRIBER_NAMESPACE" rollout status deployment/transcriber-ingress --timeout=15m
+          kubectl -n "$TRANSCRIBER_NAMESPACE" rollout status deployment/transcriber-worker --timeout=15m
+          kubectl -n "$TRANSCRIBER_NAMESPACE" get deploy,pods,svc,ingress

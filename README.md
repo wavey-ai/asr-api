@@ -2,13 +2,17 @@
 
 `transcriber` serves Deepgram-style prerecorded transcription over Wavey's `web-service` stack.
 
-The current runtime is a single-process monolith built around `upload-response`:
+It now supports three runtime roles:
 
-1. `POST /v1/listen` streams the request into the in-process upload cache.
-2. A local worker claims that cached stream, decodes supported audio through `soundkit-decoder`, chunks the resulting mono 16 kHz PCM, runs `asr-torch` for mel features and `asr-onnx` for TDT decoding, then writes the final response back into the cache.
-3. The ingress side waits on the cached response and returns a Deepgram-compatible JSON payload with `results.channels[0].alternatives[0].words`.
+1. `monolith`: one process owns `/v1/listen`, decodes audio to normalized PCM, and runs the local ASR worker against the in-process `upload-response` cache.
+2. `ingress`: CPU-oriented front door. It accepts `POST /v1/listen`, decodes supported audio through `soundkit-decoder`, normalizes to mono 16 kHz PCM, writes those PCM chunks into `upload-response`, and waits for a worker response.
+3. `worker`: GPU-oriented worker. It discovers ingress pods over the internal cache API, claims cached streams, runs `asr-torch` featurization plus `asr-onnx` decoding, then writes the final Deepgram-compatible JSON response back to the owning ingress pod.
 
-The same process also exposes the internal cache inspection and worker endpoints under `/_upload_response/...` so the monolith can be exercised before splitting ingress/transcode and GPU workers across Kubernetes.
+The split is deliberate:
+
+- audio decode / resample / downmix stays on CPU ingress nodes
+- featurization stays with transcription on GPU nodes because `asr-torch` is CUDA-backed
+- the shared handoff stays on `upload-response`; there is no Redis sidecar or external queue in this first split
 
 ## Environment
 
@@ -23,6 +27,7 @@ The same process also exposes the internal cache inspection and worker endpoints
 - `ASR_DEVICE_IDS`: comma-separated GPU ids, default `0`
 - `ASR_TORCH_SESSIONS`: featurizer sessions per device, default `1`
 - `ASR_ONNX_SESSIONS`: decoder sessions per device, default `1`
+- `TRANSCRIBER_ROLE`: `monolith`, `ingress`, or `worker`
 - `PORT`: TLS port, default `8443`
 - `ENABLE_H3`: enable HTTP/3 in addition to HTTP/2
 - `TLS_CERT_PATH` / `TLS_KEY_PATH`: optional PEM paths; if omitted the workspace's default local TLS material is used
@@ -38,6 +43,12 @@ The same process also exposes the internal cache inspection and worker endpoints
 - `UPLOAD_RESPONSE_WORKER_POLL_MS`: local worker poll interval for cached streams, default `2`
 - `UPLOAD_RESPONSE_MAX_INFLIGHT`: max simultaneously claimed cached streams for the monolith worker, default `2`
 - `UPLOAD_RESPONSE_WORKER_ID`: local worker identity for cache claims, default `transcriber-monolith`
+- `UPLOAD_RESPONSE_INGRESS_URLS`: optional comma-separated ingress origins for worker mode
+- `UPLOAD_RESPONSE_DISCOVERY_DNS`: optional `host:port` to resolve into ingress pod IPs for worker mode
+- `UPLOAD_RESPONSE_DISCOVERY_INTERVAL_MS`: ingress discovery refresh interval, default `2000`
+- `UPLOAD_RESPONSE_INSECURE_TLS`: allow self-signed / internal TLS for worker mode
+
+`ASR_MODEL_DIR` is only required for `monolith` and `worker`. Pure `ingress` mode does not load the model.
 
 ## Local Run
 
@@ -55,7 +66,22 @@ PY
 )"
 
 cargo run -- \
+  --role monolith \
   --model-dir /path/to/parakeet-tdt
+```
+
+Split example:
+
+```bash
+cargo run -- --role ingress
+```
+
+```bash
+cargo run -- \
+  --role worker \
+  --model-dir /path/to/parakeet-tdt \
+  --upload-response-ingress-urls https://127.0.0.1:8443 \
+  --upload-response-insecure-tls
 ```
 
 ## Request
@@ -81,7 +107,7 @@ JSON URL jobs are not implemented yet. This service currently supports uploaded 
 
 ## Internal Cache API
 
-The monolith also serves the `upload-response` cache API for inspection and future worker split-out:
+Ingress and monolith roles also serve the `upload-response` cache API for inspection and worker handoff:
 
 - `GET /_upload_response/streams`
 - `GET /_upload_response/streams/{stream_id}`
@@ -114,14 +140,16 @@ PY
 
 ## Deploy
 
-The repo still contains the earlier LKE scaffolding under:
+The checked-in Kubernetes shape is now split:
 
+- CPU ingress deployment: `deploy/k8s/transcriber/ingress-deployment.yaml`
+- GPU worker deployment: `deploy/k8s/transcriber/worker-deployment.yaml`
+- public service + headless discovery service: `deploy/k8s/transcriber/services.yaml`
 - image build: `docker/transcriber.Dockerfile`
 - image workflow: `.github/workflows/build-image.yml`
 - deploy workflow: `.github/workflows/deploy-main.yml`
-- manifests: `deploy/k8s/transcriber/`
 
-The Kubernetes config in this repo now points at the split ONNX model layout, but the container image path still needs a CUDA/libtorch-aware runtime before the deployed `asr-torch` stack will be usable in CI or LKE.
+The worker image expects CUDA plus Python-installed PyTorch 2.7 at runtime so `tch` can load the traced featurizer modules. The build workflow also needs a repo secret named `WAVEY_AI_GH_TOKEN` so Docker can fetch the private `asr-onnx`, `asr-torch`, and `soundkit` dependencies during image build.
 
 See also:
 

@@ -68,3 +68,5 @@ jobs:
           cache-to: |
             type=gha,scope=transcriber,mode=max
             type=registry,ref=${{ env.TRANSCRIBER_IMAGE }}:buildcache,mode=max
+          secrets: |
+            github_token=${{ secrets.WAVEY_AI_GH_TOKEN }}

@@ -11,6 +11,8 @@ Internal naming:
 - shared cluster: `wavey`
 - namespace: `transcriber`
 - image: `ghcr.io/wavey-ai/transcriber`
+- ingress deployment: `transcriber-ingress`
+- worker deployment: `transcriber-worker`
 
 ## Files
 
@@ -23,6 +25,7 @@ Internal naming:
 ## Required GitHub secrets
 
 - `LINODE_TOKEN`: token that can read the shared LKE cluster
+- `WAVEY_AI_GH_TOKEN`: token that can clone private Wavey Git dependencies during the Docker build
 
 ## Optional GitHub secrets
 
@@ -33,8 +36,11 @@ When `TRANSCRIBER_MODEL_TARBALL_URL` is set, each deploy run will sync that arch
 ## Runtime layout
 
 - namespace: `transcriber`
-- service: `transcriber`
-- ingress host: `transcribe.wavey.ai`
+- public service: `transcriber-ingress`
+- internal headless service: `transcriber-ingress-internal`
+- public ingress host: `transcribe.wavey.ai`
+- CPU ingress deployment: `transcriber-ingress`
+- GPU worker deployment: `transcriber-worker`
 - model PVC: `transcriber-model`
 - mounted model dir: `/var/lib/transcriber/models/parakeet-tdt`
 
@@ -57,6 +63,9 @@ The deployment init container verifies:
 
 ## Notes
 
-- The service terminates TLS itself on port `8443`.
-- The ingress uses HTTPS to the backend and disables request buffering so long uploads can stream through cleanly.
-- The service is GPU-oriented now. The repo's Kubernetes config matches the split ONNX model layout, but the container image still needs a CUDA/libtorch-aware runtime before LKE deploys will be usable end to end.
+- Both roles terminate TLS themselves on port `8443`.
+- Public nginx ingress points to `transcriber-ingress` and disables request buffering so long uploads stream cleanly.
+- `transcriber-ingress-internal` is headless so GPU workers can discover individual ingress pod IPs and use the internal `/_upload_response/...` cache API directly.
+- Audio decode / resample / downmix runs on CPU ingress pods.
+- Featurization stays with ONNX decode on the GPU worker because `asr-torch` loads traced CUDA featurizer modules.
+- The current LKE cluster has only one GPU node, so `transcriber-worker` competes directly with any other `nvidia.com/gpu: 1` deployment, especially `bitneedle-gpu-api`.

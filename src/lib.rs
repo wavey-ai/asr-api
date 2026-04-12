@@ -2,6 +2,7 @@ pub mod asr;
 pub mod chunking;
 pub mod config;
 pub mod deepgram;
+pub mod ingress;
 pub mod router;
 pub mod worker;
 
@@ -14,7 +15,8 @@ use upload_response::{ResponseWatcher, UploadResponseRouter, UploadResponseServi
 use web_service::{H2H3Server, Server, ServerBuilder};
 
 use crate::asr::AsrBackend;
-use crate::config::AppConfig;
+use crate::config::{AppConfig, AppRole};
+use crate::ingress::ListenIngress;
 use crate::router::AppRouter;
 use crate::worker::WorkerState;
 
@@ -29,25 +31,81 @@ pub fn init_tracing(rust_log: &str) {
 pub async fn run(config: AppConfig) -> Result<()> {
     config.validate()?;
 
-    let model_dir = config.model_dir.clone();
-    let vocab_path = config.resolve_vocab_path()?;
     let (cert_b64, key_b64) = config.tls_base64()?;
-    let backend = Arc::new(AsrBackend::new(
-        &model_dir,
-        &vocab_path,
-        &config.device_ids,
-        config.torch_sessions,
-        config.onnx_sessions,
-    )?);
-    let worker_state = Arc::new(WorkerState::new(config.clone(), backend));
-    let upload_service = Arc::new(UploadResponseService::new(config.upload_response_config()));
-    let _watcher_handle = ResponseWatcher::new(upload_service.clone())
-        .with_poll_interval_ms(config.upload_response_watch_poll_ms)
-        .spawn();
-    let _worker_handle = worker_state.clone().spawn_cache_worker(upload_service.clone());
+    let model_dir = if config.role.uses_asr_backend() {
+        Some(config.model_dir()?.to_path_buf())
+    } else {
+        None
+    };
+    let vocab_path = if config.role.uses_asr_backend() {
+        Some(config.resolve_vocab_path()?)
+    } else {
+        None
+    };
 
-    let upload_router = Arc::new(UploadResponseRouter::new(upload_service));
-    let router = Box::new(AppRouter::new(upload_router));
+    let upload_service = if config.role.exposes_upload_cache() {
+        Some(Arc::new(UploadResponseService::new(
+            config.upload_response_config(),
+        )))
+    } else {
+        None
+    };
+
+    let _watcher_handle = upload_service.as_ref().map(|upload_service| {
+        ResponseWatcher::new(upload_service.clone())
+            .with_poll_interval_ms(config.upload_response_watch_poll_ms)
+            .spawn()
+    });
+
+    let backend = if config.role.uses_asr_backend() {
+        Some(Arc::new(AsrBackend::new(
+            model_dir
+                .as_ref()
+                .expect("model dir already validated for backend role"),
+            vocab_path
+                .as_ref()
+                .expect("vocab path already validated for backend role"),
+            &config.device_ids,
+            config.torch_sessions,
+            config.onnx_sessions,
+        )?))
+    } else {
+        None
+    };
+
+    let worker_state = backend.map(|backend| Arc::new(WorkerState::new(config.clone(), backend)));
+
+    let _worker_handle = match config.role {
+        AppRole::Monolith => Some(
+            worker_state
+                .as_ref()
+                .expect("monolith role must have worker state")
+                .clone()
+                .spawn_cache_worker(
+                    upload_service
+                        .as_ref()
+                        .expect("monolith role must have upload cache")
+                        .clone(),
+                ),
+        ),
+        AppRole::Worker => Some(
+            worker_state
+                .as_ref()
+                .expect("worker role must have worker state")
+                .clone()
+                .spawn_remote_cache_worker(),
+        ),
+        AppRole::Ingress => None,
+    };
+
+    let upload_router = upload_service
+        .as_ref()
+        .map(|upload_service| Arc::new(UploadResponseRouter::new(upload_service.clone())));
+    let listen_ingress = upload_service
+        .as_ref()
+        .filter(|_| config.role.serves_listen())
+        .map(|upload_service| Arc::new(ListenIngress::new(config.clone(), upload_service.clone())));
+    let router = Box::new(AppRouter::new(upload_router, listen_ingress));
 
     let server = H2H3Server::builder()
         .with_tls(cert_b64, key_b64)
@@ -62,10 +120,17 @@ pub async fn run(config: AppConfig) -> Result<()> {
     let handle = server.start().await.context("failed to start server")?;
     let _ = handle.ready_rx.await;
     info!(
+        role = ?config.role,
         port = config.port,
         enable_h3 = config.enable_h3,
-        model_dir = %model_dir.display(),
-        vocab_path = %vocab_path.display(),
+        model_dir = %model_dir
+            .as_ref()
+            .map(|path| path.display().to_string())
+            .unwrap_or_else(|| "-".to_string()),
+        vocab_path = %vocab_path
+            .as_ref()
+            .map(|path| path.display().to_string())
+            .unwrap_or_else(|| "-".to_string()),
         device_ids = ?config.device_ids,
         torch_sessions = config.torch_sessions,
         onnx_sessions = config.onnx_sessions,
@@ -74,6 +139,8 @@ pub async fn run(config: AppConfig) -> Result<()> {
         upload_response_num_streams = config.upload_response_num_streams,
         upload_response_slot_size_kb = config.upload_response_slot_size_kb,
         upload_response_worker_id = %config.upload_response_worker_id,
+        upload_response_discovery_dns = ?config.upload_response_discovery_dns,
+        upload_response_ingress_urls = ?config.upload_response_ingress_urls,
         "transcriber ready"
     );
 

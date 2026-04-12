@@ -1,32 +1,41 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: transcriber
+  name: transcriber-worker
   namespace: transcriber
   labels:
-    app.kubernetes.io/name: transcriber
+    app.kubernetes.io/name: transcriber-worker
+    app.kubernetes.io/component: worker
     app.kubernetes.io/part-of: transcriber
 spec:
   replicas: 1
   revisionHistoryLimit: 2
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
-      app.kubernetes.io/name: transcriber
+      app.kubernetes.io/name: transcriber-worker
   template:
     metadata:
       labels:
-        app.kubernetes.io/name: transcriber
+        app.kubernetes.io/name: transcriber-worker
+        app.kubernetes.io/component: worker
         app.kubernetes.io/part-of: transcriber
     spec:
       serviceAccountName: transcriber
       terminationGracePeriodSeconds: 120
+      tolerations:
+        - key: wavey.ai/gpu
+          operator: Equal
+          value: "true"
+          effect: NoSchedule
       affinity:
         nodeAffinity:
           requiredDuringSchedulingIgnoredDuringExecution:
             nodeSelectorTerms:
               - matchExpressions:
                   - key: node.kubernetes.io/instance-type
-                    operator: NotIn
+                    operator: In
                     values:
                       - g2-gpu-rtx4000a1-s
       initContainers:
@@ -58,7 +67,7 @@ spec:
               fi
           envFrom:
             - configMapRef:
-                name: transcriber-config
+                name: transcriber-worker-config
             - secretRef:
                 name: transcriber-env
                 optional: true
@@ -66,7 +75,7 @@ spec:
             - name: model
               mountPath: /var/lib/transcriber/models
       containers:
-        - name: transcriber
+        - name: worker
           image: ghcr.io/wavey-ai/transcriber:main
           imagePullPolicy: IfNotPresent
           ports:
@@ -74,7 +83,7 @@ spec:
               containerPort: 8443
           envFrom:
             - configMapRef:
-                name: transcriber-config
+                name: transcriber-worker-config
             - secretRef:
                 name: transcriber-env
                 optional: true
@@ -115,10 +124,12 @@ spec:
           resources:
             requests:
               cpu: "2"
-              memory: 8Gi
+              memory: 12Gi
+              nvidia.com/gpu: "1"
             limits:
               cpu: "4"
-              memory: 12Gi
+              memory: 16Gi
+              nvidia.com/gpu: "1"
       volumes:
         - name: model
           persistentVolumeClaim:

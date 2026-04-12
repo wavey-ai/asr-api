@@ -4,8 +4,10 @@ kind: Kustomization
 resources:
   - namespace.yaml
   - serviceaccount.yaml
-  - configmap.yaml
+  - ingress-configmap.yaml
+  - worker-configmap.yaml
   - pvc.yaml
-  - deployment.yaml
-  - service.yaml
+  - ingress-deployment.yaml
+  - worker-deployment.yaml
+  - services.yaml
   - ingress.yaml

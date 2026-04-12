@@ -6,13 +6,13 @@ Deploy `transcriber` across multiple GPU nodes so uploads can land on any ingres
 
 ## Current constraint
 
-`upload-response` is currently process-local and in-memory:
+`upload-response` is still ingress-local and in-memory:
 
 - request slots live in a local `ChunkCache`
 - response slots live in a local `ChunkCache`
 - the waiter for the final HTTP response is a local oneshot channel
 
-That is good for single-process or same-pod handoff. It is not a distributed cache.
+That is not a distributed cache. The first split therefore works by making workers talk back to the owning ingress pod over the internal `/_upload_response/...` API instead of trying to globalize the cache itself.
 
 ## Recommendation
 
@@ -28,8 +28,10 @@ Responsibilities:
 
 - terminate public HTTP/2 and HTTP/3
 - accept `POST /v1/listen`
-- stream upload bytes into `upload-response`
+- decode and normalize uploaded audio on CPU
+- stream normalized mono 16 kHz PCM into `upload-response`
 - keep the client connection open until the final response is ready
+- expose `/_upload_response/...` for remote workers
 
 Scale:
 
@@ -37,21 +39,7 @@ Scale:
 - multiple replicas behind a `Service` / ingress
 - CPU-oriented autoscaling
 
-### 2. Transcode stage
-
-Responsibilities:
-
-- tail `upload-response` request slots
-- decode and resample through `soundkit-decoder`
-- emit normalized `16 kHz mono f32` PCM chunks
-- compute request metadata such as SHA-256 and duration
-
-Recommended placement:
-
-- first iteration: same pod as the edge ingress
-- later, if needed, split into a separate worker deployment only after the PCM/result handoff is externalized
-
-### 3. GPU transcription workers
+### 2. GPU transcription workers
 
 Responsibilities:
 
@@ -68,14 +56,23 @@ Scale:
 
 This is the layer that scales when more Ada 4000 nodes are added.
 
-## What should be global
+## First split handoff
 
-Use a real shared backend for cross-pod handoff:
+The first deployment does not add Redis or another external queue. Instead:
 
-- object storage for larger PCM chunk payloads or finalized normalized audio
-- Redis / NATS JetStream / Kafka / Postgres for job manifests, progress, ownership, and final response routing
+- ingress pods own the request/response cache
+- GPU workers discover ingress pod IPs through a headless Service
+- workers claim streams over the internal cache API
+- workers read cached PCM slots and write final response slots back to the owning ingress pod
 
-The exact store can vary, but it needs to be shared across pods and nodes.
+That is enough to split CPU ingest/transcode from GPU ASR while keeping the handoff inside the Wavey cache primitives.
+
+## What eventually needs to be global
+
+If the internal cache mesh stops scaling cleanly, the next externalization target is PCM/job manifests, not raw upload bytes:
+
+- object storage for larger normalized PCM payloads
+- NATS JetStream / Kafka / Postgres for manifests, progress, ownership, and final response routing
 
 ## What should be node-local
 
@@ -90,15 +87,14 @@ That avoids repeated multi-gigabyte model downloads per pod and keeps cold start
 ## Practical rollout order
 
 1. Refactor `transcriber` so the current inline request path becomes a worker that can consume `upload-response` streams.
-2. Keep ingress and worker in the same pod first, so the existing local `ChunkCache` model still works.
-3. Add an internal PCM/job handoff that is externalized into shared storage.
-4. Move GPU transcription to a separate GPU deployment.
-5. Add a model-cache DaemonSet for GPU nodes.
-6. Add autoscaling separately for CPU ingress and GPU workers.
+2. Split CPU ingress from GPU workers over the internal cache API.
+3. Add a model-cache DaemonSet for GPU nodes when cold starts matter.
+4. Externalize PCM/job manifests only if the internal cache handoff becomes the bottleneck.
+5. Add autoscaling separately for CPU ingress and GPU workers.
 
 ## Short version
 
 - `upload-response` is the right ingress primitive
 - the request cache should stay local, not global
-- cross-node scaling needs a shared job/result backend
+- the first split can use the cache API itself as the cross-pod handoff
 - a DaemonSet makes sense for model cache warming, not for request-body cache

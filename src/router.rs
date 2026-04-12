@@ -3,6 +3,7 @@ use bytes::Bytes;
 use http::{Method, Request, StatusCode};
 use std::sync::Arc;
 use upload_response::UploadResponseRouter;
+use crate::ingress::ListenIngress;
 use web_service::{
     BodyStream, HandlerResponse, HandlerResult, Router, ServerError, StreamWriter,
     WebSocketHandler, WebTransportHandler,
@@ -10,12 +11,13 @@ use web_service::{
 
 #[derive(Clone)]
 pub struct AppRouter {
-    upload: Arc<UploadResponseRouter>,
+    upload: Option<Arc<UploadResponseRouter>>,
+    listen: Option<Arc<ListenIngress>>,
 }
 
 impl AppRouter {
-    pub fn new(upload: Arc<UploadResponseRouter>) -> Self {
-        Self { upload }
+    pub fn new(upload: Option<Arc<UploadResponseRouter>>, listen: Option<Arc<ListenIngress>>) -> Self {
+        Self { upload, listen }
     }
 
     async fn handle_health(&self) -> HandlerResult<HandlerResponse> {
@@ -66,8 +68,14 @@ impl Router for AppRouter {
             (&Method::GET, "/") | (&Method::GET, "/health") | (&Method::GET, "/healthz") => {
                 self.handle_health().await
             }
-            (&Method::OPTIONS, "/v1/listen") => self.handle_options().await,
-            _ if Self::is_upload_path(req.uri().path()) => self.upload.route(req).await,
+            (&Method::OPTIONS, "/v1/listen") if self.listen.is_some() => self.handle_options().await,
+            _ if Self::is_upload_path(req.uri().path()) => {
+                if let Some(upload) = &self.upload {
+                    upload.route(req).await
+                } else {
+                    Ok(Self::not_found())
+                }
+            }
             _ => Ok(Self::not_found()),
         }
     }
@@ -77,15 +85,26 @@ impl Router for AppRouter {
         req: Request<()>,
         body: BodyStream,
     ) -> HandlerResult<HandlerResponse> {
-        if Self::is_upload_path(req.uri().path()) || Self::is_listen_path(req.uri().path()) {
-            self.upload.route_body(req, body).await
+        if Self::is_listen_path(req.uri().path()) {
+            if let Some(listen) = &self.listen {
+                Ok(listen.handle_listen(req, body).await)
+            } else {
+                Ok(Self::not_found())
+            }
+        } else if Self::is_upload_path(req.uri().path()) {
+            if let Some(upload) = &self.upload {
+                upload.route_body(req, body).await
+            } else {
+                Ok(Self::not_found())
+            }
         } else {
             Ok(Self::not_found())
         }
     }
 
     fn has_body_handler(&self, path: &str) -> bool {
-        Self::is_upload_path(path) || Self::is_listen_path(path)
+        (self.upload.is_some() && Self::is_upload_path(path))
+            || (self.listen.is_some() && Self::is_listen_path(path))
     }
 
     fn is_streaming(&self, _path: &str) -> bool {
