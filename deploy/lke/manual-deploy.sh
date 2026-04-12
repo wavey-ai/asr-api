@@ -57,6 +57,14 @@ kubectl -n "$ASR_API_NAMESPACE" create secret tls asr-wavey-ai-tls \
 kubectl apply -f "${ASR_API_KUSTOMIZE_PATH}/pvc.yaml"
 
 if [[ -n "$MODEL_TARBALL_URL" ]]; then
+  if kubectl -n "$ASR_API_NAMESPACE" get deployment asr-api-worker >/dev/null 2>&1; then
+    kubectl -n "$ASR_API_NAMESPACE" scale deployment/asr-api-worker --replicas=0
+    kubectl -n "$ASR_API_NAMESPACE" wait \
+      --for=delete pod \
+      -l app.kubernetes.io/name=asr-api-worker \
+      --timeout=10m || true
+  fi
+
   kubectl -n "$ASR_API_NAMESPACE" delete job asr-api-model-sync --ignore-not-found=true --wait=true || true
   kubectl -n "$ASR_API_NAMESPACE" create secret generic asr-api-model-sync \
     --from-literal=model-url="$MODEL_TARBALL_URL" \
