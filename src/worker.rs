@@ -5,13 +5,18 @@ use crate::deepgram::{build_response, ListenOptions};
 use anyhow::Result;
 use bytes::Bytes;
 use futures_util::StreamExt;
-use http::{header::CONTENT_TYPE, Request, StatusCode};
+use http::{header::CONTENT_TYPE, HeaderName, HeaderValue, Request, StatusCode};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 use soundkit::audio_pipeline::{deserialize_audio, vec_i16_to_f32, vec_i32_to_f32};
 use soundkit::audio_types::{AudioData, PcmData};
 use soundkit_decoder::{DecodeOptions, DecodePipeline, DecodePipelineHandle};
+use std::collections::HashSet;
 use std::sync::Arc;
+use tokio::task::JoinSet;
+use tokio::time::{interval, Duration};
+use tracing::error;
+use upload_response::{TailSlot, UploadResponseService};
 use uuid::Uuid;
 use web_service::{BodyStream, HandlerResponse};
 
@@ -33,10 +38,95 @@ impl WorkerState {
         Self { config, backend }
     }
 
+    pub fn spawn_cache_worker(
+        self: Arc<Self>,
+        service: Arc<UploadResponseService>,
+    ) -> tokio::task::JoinHandle<()> {
+        tokio::spawn(async move {
+            self.run_cache_worker(service).await;
+        })
+    }
+
     pub async fn handle_listen(&self, req: Request<()>, body: BodyStream) -> HandlerResponse {
         match self.handle_listen_inner(req, body).await {
             Ok(response) => response,
             Err(error) => error_response(classify_error(&error), error.to_string()),
+        }
+    }
+
+    async fn run_cache_worker(self: Arc<Self>, service: Arc<UploadResponseService>) {
+        let mut poll = interval(Duration::from_millis(
+            self.config.upload_response_worker_poll_ms.max(1),
+        ));
+        let mut inflight = HashSet::new();
+        let mut tasks = JoinSet::new();
+
+        loop {
+            poll.tick().await;
+
+            while let Some(joined) = tasks.try_join_next() {
+                match joined {
+                    Ok(stream_id) => {
+                        inflight.remove(&stream_id);
+                    }
+                    Err(error) => {
+                        error!(%error, "cache worker task failed");
+                    }
+                }
+            }
+
+            if inflight.len() >= self.config.upload_response_max_inflight {
+                continue;
+            }
+
+            for stream in service.active_streams().await {
+                if inflight.len() >= self.config.upload_response_max_inflight {
+                    break;
+                }
+                if inflight.contains(&stream.stream_id)
+                    || stream.request_last == 0
+                    || stream.response_owner.is_some()
+                {
+                    continue;
+                }
+
+                if !service
+                    .try_claim_response(stream.stream_id, &self.config.upload_response_worker_id)
+                    .await
+                {
+                    continue;
+                }
+
+                let _ = service
+                    .register_reader(stream.stream_id, &self.config.upload_response_worker_id)
+                    .await;
+
+                inflight.insert(stream.stream_id);
+                let service = service.clone();
+                let worker = self.clone();
+                let worker_id = self.config.upload_response_worker_id.clone();
+                tasks.spawn(async move {
+                    let stream_id = stream.stream_id;
+                    let result = worker.process_cached_stream(service.clone(), stream_id).await;
+                    if let Err(error) = result {
+                        error!(stream_id, error = %error, "cached transcription failed");
+                        let response = error_response(classify_error(&error), error.to_string());
+                        if let Err(write_error) = service
+                            .write_handler_response(stream_id, response)
+                            .await
+                            .map_err(anyhow::Error::msg)
+                        {
+                            error!(
+                                stream_id,
+                                error = %write_error,
+                                "failed to write cached error response"
+                            );
+                            let _ = service.release_response(stream_id, &worker_id).await;
+                        }
+                    }
+                    stream_id
+                });
+            }
         }
     }
 
@@ -58,6 +148,143 @@ impl WorkerState {
             &options,
         );
         json_response(StatusCode::OK, &payload)
+    }
+
+    async fn process_cached_stream(
+        &self,
+        service: Arc<UploadResponseService>,
+        stream_id: u64,
+    ) -> Result<()> {
+        let (request, prepared) = self.transcribe_cached_upload(&service, stream_id).await?;
+        let options = ListenOptions::from_query(request.uri().query(), &self.config);
+        let fallback_transcript = prepared.fallback_fragments.join(" ");
+        let payload = build_response(
+            Uuid::new_v4().to_string(),
+            prepared.sha256,
+            prepared.duration_secs,
+            &prepared.committed_words,
+            &fallback_transcript,
+            &options,
+        );
+        let response = json_response(StatusCode::OK, &payload)?;
+        service
+            .write_handler_response(stream_id, response)
+            .await
+            .map_err(anyhow::Error::msg)?;
+        Ok(())
+    }
+
+    async fn transcribe_cached_upload(
+        &self,
+        service: &UploadResponseService,
+        stream_id: u64,
+    ) -> Result<(Request<()>, PreparedTranscript)> {
+        let mut poll = interval(Duration::from_millis(
+            self.config.upload_response_worker_poll_ms.max(1),
+        ));
+        let mut decoder = Self::new_decoder();
+        let mut chunker = AudioChunker::new(
+            self.config.chunk_samples(),
+            self.config.overlap_samples(),
+            self.config.min_final_samples(),
+        );
+        let mut committer = WordCommitter::default();
+        let mut committed_words = Vec::new();
+        let mut fallback_fragments = Vec::new();
+        let mut window_seq = 0u32;
+        let mut total_samples = 0usize;
+        let mut received_bytes = 0usize;
+        let mut hasher = Sha256::new();
+        let mut last_slot = 0usize;
+        let mut request = None;
+
+        'stream: loop {
+            poll.tick().await;
+            let current_last = service
+                .request_last(stream_id)
+                .ok_or_else(|| anyhow::anyhow!("request stream {stream_id} disappeared"))?;
+
+            if current_last <= last_slot {
+                continue;
+            }
+
+            for slot_id in (last_slot + 1)..=current_last {
+                match service.tail_request(stream_id, slot_id).await {
+                    Some(TailSlot::Headers(headers)) => {
+                        let built = build_request_from_parts(
+                            headers.method,
+                            headers.path,
+                            headers.authority,
+                            headers
+                                .headers
+                                .into_iter()
+                                .map(|header| (header.name, header.value))
+                                .collect(),
+                        )?;
+                        reject_json_requests(&built)?;
+                        request = Some(built);
+                    }
+                    Some(TailSlot::Body(chunk)) => {
+                        received_bytes += chunk.len();
+                        hasher.update(&chunk);
+                        self.feed_decoder(&mut decoder, chunk, &mut chunker, &mut total_samples)
+                            .await?;
+                        self.process_ready_windows(
+                            &mut chunker,
+                            &mut committer,
+                            &mut committed_words,
+                            &mut fallback_fragments,
+                            &mut window_seq,
+                        )
+                        .await?;
+                    }
+                    Some(TailSlot::End) => {
+                        break 'stream;
+                    }
+                    None => {}
+                }
+            }
+
+            last_slot = current_last;
+        }
+
+        anyhow::ensure!(received_bytes > 0, "request body did not include audio bytes");
+        let request = request.ok_or_else(|| anyhow::anyhow!("request headers were missing"))?;
+
+        self.finish_decoder(&mut decoder, &mut chunker, &mut total_samples)
+            .await?;
+        self.process_ready_windows(
+            &mut chunker,
+            &mut committer,
+            &mut committed_words,
+            &mut fallback_fragments,
+            &mut window_seq,
+        )
+        .await?;
+
+        if let Some(window) = chunker.take_final_window() {
+            self.transcribe_window(
+                &window.samples,
+                window.start_sample,
+                window.is_final,
+                chunker.stride_samples(),
+                window_seq,
+                &mut committer,
+                &mut committed_words,
+                &mut fallback_fragments,
+            )
+            .await?;
+        }
+
+        Ok((
+            request,
+            PreparedTranscript {
+                committed_words,
+                fallback_fragments,
+                duration_secs: total_samples as f64 / ASR_SAMPLE_RATE as f64,
+                sha256: format!("{:x}", hasher.finalize()),
+            },
+        ))
     }
 
     async fn transcribe_upload(&self, mut body: BodyStream) -> Result<PreparedTranscript> {
@@ -355,4 +582,37 @@ fn classify_error(error: &anyhow::Error) -> StatusCode {
     } else {
         StatusCode::INTERNAL_SERVER_ERROR
     }
+}
+
+fn build_request_from_parts(
+    method: Vec<u8>,
+    path: Vec<u8>,
+    authority: Option<Vec<u8>>,
+    headers: Vec<(Vec<u8>, Vec<u8>)>,
+) -> Result<Request<()>> {
+    let method = String::from_utf8(method)
+        .map_err(|error| anyhow::anyhow!("invalid request method bytes: {error}"))?;
+    let uri = String::from_utf8(path)
+        .map_err(|error| anyhow::anyhow!("invalid request path bytes: {error}"))?;
+
+    let mut builder = Request::builder().method(method.as_str()).uri(uri.as_str());
+    if let Some(authority) = authority {
+        builder = builder.header(
+            http::header::HOST,
+            HeaderValue::from_bytes(&authority)
+                .map_err(|error| anyhow::anyhow!("invalid authority header: {error}"))?,
+        );
+    }
+
+    for (name_bytes, value_bytes) in headers {
+        let name = HeaderName::from_bytes(&name_bytes)
+            .map_err(|error| anyhow::anyhow!("invalid header name: {error}"))?;
+        let value = HeaderValue::from_bytes(&value_bytes)
+            .map_err(|error| anyhow::anyhow!("invalid header value: {error}"))?;
+        builder = builder.header(name, value);
+    }
+
+    builder
+        .body(())
+        .map_err(|error| anyhow::anyhow!("failed to build request: {error}"))
 }

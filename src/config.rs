@@ -1,6 +1,7 @@
 use anyhow::{Context, Result};
 use clap::Parser;
 use std::path::{Path, PathBuf};
+use upload_response::UploadResponseConfig;
 use web_service::{load_default_tls_base64, load_tls_base64_from_paths};
 
 pub const ASR_SAMPLE_RATE: u32 = 16_000;
@@ -59,6 +60,50 @@ pub struct AppConfig {
 
     #[arg(long, env = "UTT_SPLIT_SECONDS", default_value_t = 0.8)]
     pub utt_split_seconds: f64,
+
+    #[arg(long, env = "UPLOAD_RESPONSE_NUM_STREAMS", default_value_t = 128)]
+    pub upload_response_num_streams: usize,
+
+    #[arg(long, env = "UPLOAD_RESPONSE_SLOT_SIZE_KB", default_value_t = 64)]
+    pub upload_response_slot_size_kb: usize,
+
+    #[arg(long, env = "UPLOAD_RESPONSE_SLOTS_PER_STREAM", default_value_t = 16_384)]
+    pub upload_response_slots_per_stream: usize,
+
+    #[arg(
+        long,
+        env = "UPLOAD_RESPONSE_TIMEOUT_MS",
+        default_value_t = 30_000
+    )]
+    pub upload_response_timeout_ms: u64,
+
+    #[arg(
+        long,
+        env = "UPLOAD_RESPONSE_WATCH_POLL_MS",
+        default_value_t = 1
+    )]
+    pub upload_response_watch_poll_ms: u64,
+
+    #[arg(
+        long,
+        env = "UPLOAD_RESPONSE_WORKER_POLL_MS",
+        default_value_t = 2
+    )]
+    pub upload_response_worker_poll_ms: u64,
+
+    #[arg(
+        long,
+        env = "UPLOAD_RESPONSE_MAX_INFLIGHT",
+        default_value_t = 2
+    )]
+    pub upload_response_max_inflight: usize,
+
+    #[arg(
+        long,
+        env = "UPLOAD_RESPONSE_WORKER_ID",
+        default_value = "transcriber-monolith"
+    )]
+    pub upload_response_worker_id: String,
 }
 
 impl AppConfig {
@@ -93,6 +138,30 @@ impl AppConfig {
         anyhow::ensure!(
             self.utt_split_seconds >= 0.0,
             "UTT_SPLIT_SECONDS must be >= 0"
+        );
+        anyhow::ensure!(
+            self.upload_response_num_streams > 0,
+            "UPLOAD_RESPONSE_NUM_STREAMS must be > 0"
+        );
+        anyhow::ensure!(
+            self.upload_response_slot_size_kb > 0,
+            "UPLOAD_RESPONSE_SLOT_SIZE_KB must be > 0"
+        );
+        anyhow::ensure!(
+            self.upload_response_slots_per_stream > 0,
+            "UPLOAD_RESPONSE_SLOTS_PER_STREAM must be > 0"
+        );
+        anyhow::ensure!(
+            self.upload_response_timeout_ms > 0,
+            "UPLOAD_RESPONSE_TIMEOUT_MS must be > 0"
+        );
+        anyhow::ensure!(
+            self.upload_response_max_inflight > 0,
+            "UPLOAD_RESPONSE_MAX_INFLIGHT must be > 0"
+        );
+        anyhow::ensure!(
+            !self.upload_response_worker_id.trim().is_empty(),
+            "UPLOAD_RESPONSE_WORKER_ID must not be empty"
         );
 
         ensure_any_exists(
@@ -188,6 +257,15 @@ impl AppConfig {
 
     pub fn min_final_samples(&self) -> usize {
         seconds_to_samples(self.final_min_seconds)
+    }
+
+    pub fn upload_response_config(&self) -> UploadResponseConfig {
+        UploadResponseConfig {
+            num_streams: self.upload_response_num_streams,
+            slot_size_kb: self.upload_response_slot_size_kb,
+            slots_per_stream: self.upload_response_slots_per_stream,
+            response_timeout_ms: self.upload_response_timeout_ms,
+        }
     }
 }
 

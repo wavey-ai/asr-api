@@ -3499,6 +3499,7 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
+ "upload-response",
  "url",
  "uuid",
  "web-service",
@@ -3586,6 +3587,28 @@ name = "unty"
 version = "0.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6d49784317cd0d1ee7ec5c716dd598ec5b4483ea832a2dced265471cc0f690ae"
+
+[[package]]
+name = "upload-response"
+version = "0.1.0"
+source = "git+https://github.com/wavey-ai/web-services.git?rev=12acce3c4514093011a4463e471baf4a06264ecd#12acce3c4514093011a4463e471baf4a06264ecd"
+dependencies = [
+ "async-trait",
+ "bytes",
+ "futures-util",
+ "http",
+ "http-pack",
+ "hyper",
+ "hyper-util",
+ "playlists",
+ "rustls 0.23.37",
+ "rustls-pemfile",
+ "tokio",
+ "tokio-rustls",
+ "tokio-tungstenite",
+ "tracing",
+ "web-service",
+]
 
 [[package]]
 name = "ureq"
@@ -3810,7 +3833,7 @@ dependencies = [
 [[package]]
 name = "web-service"
 version = "0.1.0"
-source = "git+https://github.com/wavey-ai/web-services.git?rev=df792f953e884137bba33dcb16e20cb42d10c4e6#df792f953e884137bba33dcb16e20cb42d10c4e6"
+source = "git+https://github.com/wavey-ai/web-services.git?rev=12acce3c4514093011a4463e471baf4a06264ecd#12acce3c4514093011a4463e471baf4a06264ecd"
 dependencies = [
  "anyhow",
  "async-trait",

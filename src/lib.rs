@@ -10,6 +10,7 @@ use clap::Parser;
 use std::sync::Arc;
 use tracing::info;
 use tracing_subscriber::EnvFilter;
+use upload_response::{ResponseWatcher, UploadResponseRouter, UploadResponseService};
 use web_service::{H2H3Server, Server, ServerBuilder};
 
 use crate::asr::AsrBackend;
@@ -39,7 +40,14 @@ pub async fn run(config: AppConfig) -> Result<()> {
         config.onnx_sessions,
     )?);
     let worker_state = Arc::new(WorkerState::new(config.clone(), backend));
-    let router = Box::new(AppRouter::new(worker_state));
+    let upload_service = Arc::new(UploadResponseService::new(config.upload_response_config()));
+    let _watcher_handle = ResponseWatcher::new(upload_service.clone())
+        .with_poll_interval_ms(config.upload_response_watch_poll_ms)
+        .spawn();
+    let _worker_handle = worker_state.clone().spawn_cache_worker(upload_service.clone());
+
+    let upload_router = Arc::new(UploadResponseRouter::new(upload_service));
+    let router = Box::new(AppRouter::new(upload_router));
 
     let server = H2H3Server::builder()
         .with_tls(cert_b64, key_b64)
@@ -63,6 +71,9 @@ pub async fn run(config: AppConfig) -> Result<()> {
         onnx_sessions = config.onnx_sessions,
         chunk_seconds = config.chunk_seconds,
         overlap_seconds = config.overlap_seconds,
+        upload_response_num_streams = config.upload_response_num_streams,
+        upload_response_slot_size_kb = config.upload_response_slot_size_kb,
+        upload_response_worker_id = %config.upload_response_worker_id,
         "transcriber ready"
     );
 

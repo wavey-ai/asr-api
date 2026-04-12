@@ -439,6 +439,14 @@ mod tests {
             overlap_seconds: 2.0,
             final_min_seconds: 0.5,
             utt_split_seconds: 0.8,
+            upload_response_num_streams: 128,
+            upload_response_slot_size_kb: 64,
+            upload_response_slots_per_stream: 16_384,
+            upload_response_timeout_ms: 30_000,
+            upload_response_watch_poll_ms: 1,
+            upload_response_worker_poll_ms: 2,
+            upload_response_max_inflight: 2,
+            upload_response_worker_id: "test-worker".into(),
         }
     }
 

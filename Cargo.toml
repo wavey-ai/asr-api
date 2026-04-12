@@ -24,6 +24,7 @@ soundkit-decoder = { git = "https://github.com/wavey-ai/soundkit.git", rev = "95
 tokio = { version = "1.45", features = ["full"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+upload-response = { git = "https://github.com/wavey-ai/web-services.git", package = "upload-response", rev = "12acce3c4514093011a4463e471baf4a06264ecd" }
 url = "2.5"
 uuid = { version = "1", features = ["v4"] }
-web-service = { git = "https://github.com/wavey-ai/web-services.git", rev = "df792f953e884137bba33dcb16e20cb42d10c4e6", package = "web-service" }
+web-service = { git = "https://github.com/wavey-ai/web-services.git", package = "web-service", rev = "12acce3c4514093011a4463e471baf4a06264ecd" }

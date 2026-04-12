@@ -1,8 +1,8 @@
-use crate::worker::WorkerState;
 use async_trait::async_trait;
 use bytes::Bytes;
 use http::{Method, Request, StatusCode};
 use std::sync::Arc;
+use upload_response::UploadResponseRouter;
 use web_service::{
     BodyStream, HandlerResponse, HandlerResult, Router, ServerError, StreamWriter,
     WebSocketHandler, WebTransportHandler,
@@ -10,12 +10,12 @@ use web_service::{
 
 #[derive(Clone)]
 pub struct AppRouter {
-    workers: Arc<WorkerState>,
+    upload: Arc<UploadResponseRouter>,
 }
 
 impl AppRouter {
-    pub fn new(workers: Arc<WorkerState>) -> Self {
-        Self { workers }
+    pub fn new(upload: Arc<UploadResponseRouter>) -> Self {
+        Self { upload }
     }
 
     async fn handle_health(&self) -> HandlerResult<HandlerResponse> {
@@ -49,6 +49,14 @@ impl AppRouter {
             etag: None,
         }
     }
+
+    fn is_upload_path(path: &str) -> bool {
+        path.starts_with("/_upload_response/")
+    }
+
+    fn is_listen_path(path: &str) -> bool {
+        path == "/v1/listen"
+    }
 }
 
 #[async_trait]
@@ -59,6 +67,7 @@ impl Router for AppRouter {
                 self.handle_health().await
             }
             (&Method::OPTIONS, "/v1/listen") => self.handle_options().await,
+            _ if Self::is_upload_path(req.uri().path()) => self.upload.route(req).await,
             _ => Ok(Self::not_found()),
         }
     }
@@ -68,14 +77,15 @@ impl Router for AppRouter {
         req: Request<()>,
         body: BodyStream,
     ) -> HandlerResult<HandlerResponse> {
-        match (req.method(), req.uri().path()) {
-            (&Method::POST, "/v1/listen") => Ok(self.workers.handle_listen(req, body).await),
-            _ => Ok(Self::not_found()),
+        if Self::is_upload_path(req.uri().path()) || Self::is_listen_path(req.uri().path()) {
+            self.upload.route_body(req, body).await
+        } else {
+            Ok(Self::not_found())
         }
     }
 
     fn has_body_handler(&self, path: &str) -> bool {
-        path == "/v1/listen"
+        Self::is_upload_path(path) || Self::is_listen_path(path)
     }
 
     fn is_streaming(&self, _path: &str) -> bool {
