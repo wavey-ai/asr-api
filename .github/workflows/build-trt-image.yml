@@ -27,7 +27,11 @@ env:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on:
+      - self-hosted
+      - linux
+      - x64
+      - asr-api-build
     timeout-minutes: 90
     steps:
       - name: Check out repository
