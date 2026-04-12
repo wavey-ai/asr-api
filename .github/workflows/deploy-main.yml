@@ -15,7 +15,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  ASR_API_CLUSTER_LABEL: wavey
+  ASR_API_CLUSTER_LABEL: wavey-us-ord
   ASR_API_NAMESPACE: asr-api
   ASR_API_DOMAIN: asr.wavey.ai
   ASR_API_REGISTRY: asr-registry.wavey.ai

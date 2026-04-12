@@ -1,6 +1,6 @@
 # asr-api on wavey LKE
 
-`asr-api` deploys into the shared Linode Kubernetes Engine cluster labeled `wavey`.
+`asr-api` deploys into the shared Linode Kubernetes Engine cluster labeled `wavey-us-ord`.
 
 Public naming:
 
@@ -8,7 +8,7 @@ Public naming:
 
 Internal naming:
 
-- shared cluster: `wavey`
+- shared cluster: `wavey-us-ord`
 - namespace: `asr-api`
 - image: `asr-registry.wavey.ai/asr-api-worker`
 - ingress deployment: `asr-api-ingress`
