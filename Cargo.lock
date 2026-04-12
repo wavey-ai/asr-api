@@ -244,30 +244,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "bag-of-beats"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-trait",
- "bytes",
- "clap 4.6.0",
- "dotenvy",
- "futures-util",
- "http",
- "http-pack",
- "parakeet-rs",
- "serde",
- "serde_json",
- "soundkit",
- "soundkit-decoder",
- "tokio",
- "tracing",
- "tracing-subscriber",
- "upload-response",
- "web-service",
-]
-
-[[package]]
 name = "base64"
 version = "0.13.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3489,6 +3465,30 @@ dependencies = [
  "tracing-core",
  "tracing-log",
  "tracing-serde",
+]
+
+[[package]]
+name = "transcriber"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "bytes",
+ "clap 4.6.0",
+ "dotenvy",
+ "futures-util",
+ "http",
+ "http-pack",
+ "parakeet-rs",
+ "serde",
+ "serde_json",
+ "soundkit",
+ "soundkit-decoder",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "upload-response",
+ "web-service",
 ]
 
 [[package]]

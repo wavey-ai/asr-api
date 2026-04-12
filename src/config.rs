@@ -7,7 +7,7 @@ pub const PARAKEET_SAMPLE_RATE: u32 = 16_000;
 
 #[derive(Debug, Clone, Parser)]
 #[command(
-    name = "bag-of-beats",
+    name = "transcriber",
     about = "Upload-response backed Parakeet TDT transcription service"
 )]
 pub struct AppConfig {

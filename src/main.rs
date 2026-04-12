@@ -5,10 +5,10 @@ use tracing::info;
 use tracing_subscriber::EnvFilter;
 use web_service::{H2H3Server, Server, ServerBuilder};
 
-use bag_of_beats::config::AppConfig;
-use bag_of_beats::model::ModelPool;
-use bag_of_beats::router::AppRouter;
-use bag_of_beats::worker::WorkerState;
+use transcriber::config::AppConfig;
+use transcriber::model::ModelPool;
+use transcriber::router::AppRouter;
+use transcriber::worker::WorkerState;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -46,7 +46,7 @@ async fn main() -> Result<()> {
         model_dir = %config.model_dir.display(),
         chunk_seconds = config.chunk_seconds,
         overlap_seconds = config.overlap_seconds,
-        "bag-of-beats ready"
+        "transcriber ready"
     );
 
     tokio::signal::ctrl_c().await?;

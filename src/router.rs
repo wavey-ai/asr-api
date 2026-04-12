@@ -39,7 +39,7 @@ impl AppRouter {
         Ok(HandlerResponse {
             status: StatusCode::OK,
             body: Some(Bytes::from(
-                "{\"status\":\"ok\",\"service\":\"bag-of-beats\"}",
+                "{\"status\":\"ok\",\"service\":\"transcriber\"}",
             )),
             content_type: Some("application/json".to_string()),
             headers: vec![("cache-control".to_string(), "no-store".to_string())],

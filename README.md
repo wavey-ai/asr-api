@@ -1,6 +1,6 @@
-# bag-of-beats
+# transcriber
 
-`bag-of-beats` serves NVIDIA Parakeet TDT ONNX models over Wavey's `web-service` stack and uses `upload-response` as the request/response transport.
+`transcriber` serves NVIDIA Parakeet TDT ONNX models over Wavey's `web-service` stack and uses `upload-response` as the request/response transport.
 
 It accepts raw file uploads on `POST /transcribe`, decodes supported audio formats through `soundkit-decoder`, chunks the decoded mono 16 kHz PCM into overlapped windows, runs `parakeet-rs` on each window, and streams newline-delimited JSON back to the client as transcript segments are committed.
 
