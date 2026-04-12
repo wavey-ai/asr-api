@@ -1,30 +1,66 @@
 use crate::chunking::CommittedWord;
 use crate::config::{AppConfig, DEFAULT_LANGUAGE, DEFAULT_MODEL_NAME};
 use chrono::{SecondsFormat, Utc};
+use http::Request;
 use serde::Serialize;
 use std::collections::BTreeMap;
 use url::form_urlencoded;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AudioEncoding {
+    Linear16,
+}
 
 #[derive(Debug, Clone)]
 pub struct ListenOptions {
     pub utterances: bool,
     pub paragraphs: bool,
+    pub timestamps: bool,
+    pub words: bool,
+    pub interim_results: bool,
+    pub endpointing_ms: Option<u64>,
     pub utterance_split_secs: f64,
     pub language: String,
     pub model: String,
+    pub encoding: Option<AudioEncoding>,
+    pub sample_rate_hz: Option<u32>,
+    pub channels: u8,
+    pub diarize: bool,
+    pub punctuate: bool,
+    pub smart_format: bool,
+    pub numerals: bool,
 }
 
 impl ListenOptions {
-    pub fn from_query(query: Option<&str>, config: &AppConfig) -> Self {
+    pub fn from_request(req: &Request<()>, config: &AppConfig) -> Self {
+        let header_has_timestamps = req.headers().get("timestamps").is_some();
+        let header_has_words = req.headers().get("words").is_some();
         let mut options = Self {
             utterances: false,
             paragraphs: false,
+            timestamps: false,
+            words: false,
+            interim_results: true,
+            endpointing_ms: None,
             utterance_split_secs: config.utt_split_seconds,
             language: DEFAULT_LANGUAGE.to_string(),
             model: DEFAULT_MODEL_NAME.to_string(),
+            encoding: None,
+            sample_rate_hz: None,
+            channels: 1,
+            diarize: false,
+            punctuate: true,
+            smart_format: false,
+            numerals: false,
         };
 
-        if let Some(query) = query {
+        if let Some(value) = get_request_value(req, "timestamps", "timestamps") {
+            options.timestamps = parse_bool(&value).unwrap_or(false);
+        } else if let Some(value) = get_request_value(req, "words", "words") {
+            options.words = parse_bool(&value).unwrap_or(false);
+        }
+
+        if let Some(query) = req.uri().query() {
             for (key, value) in form_urlencoded::parse(query.as_bytes()) {
                 match key.as_ref() {
                     "utterances" => {
@@ -36,6 +72,28 @@ impl ListenOptions {
                         if let Some(parsed) = parse_bool(&value) {
                             options.paragraphs = parsed;
                         }
+                    }
+                    "timestamps" => {
+                        if !header_has_timestamps {
+                            if let Some(parsed) = parse_bool(&value) {
+                                options.timestamps = parsed;
+                            }
+                        }
+                    }
+                    "words" => {
+                        if !header_has_words {
+                            if let Some(parsed) = parse_bool(&value) {
+                                options.words = parsed;
+                            }
+                        }
+                    }
+                    "interim_results" => {
+                        if let Some(parsed) = parse_bool(&value) {
+                            options.interim_results = parsed;
+                        }
+                    }
+                    "endpointing" => {
+                        options.endpointing_ms = parse_u64(&value);
                     }
                     "utt_split" => {
                         if let Ok(parsed) = value.parse::<f64>() {
@@ -54,12 +112,55 @@ impl ListenOptions {
                             options.model = value.into_owned();
                         }
                     }
+                    "encoding" => {
+                        options.encoding = parse_encoding(&value);
+                    }
+                    "sample_rate" => {
+                        options.sample_rate_hz = parse_sample_rate(&value);
+                    }
+                    "channels" => {
+                        if let Some(parsed) = parse_u8(&value) {
+                            options.channels = parsed.max(1);
+                        }
+                    }
+                    "diarize" => {
+                        if let Some(parsed) = parse_bool(&value) {
+                            options.diarize = parsed;
+                        }
+                    }
+                    "punctuate" => {
+                        if let Some(parsed) = parse_bool(&value) {
+                            options.punctuate = parsed;
+                        }
+                    }
+                    "smart_format" => {
+                        if let Some(parsed) = parse_bool(&value) {
+                            options.smart_format = parsed;
+                        }
+                    }
+                    "numerals" => {
+                        if let Some(parsed) = parse_bool(&value) {
+                            options.numerals = parsed;
+                        }
+                    }
                     _ => {}
                 }
             }
         }
 
+        if options.timestamps {
+            options.words = true;
+        }
+
         options
+    }
+
+    pub fn wants_word_timestamps(&self) -> bool {
+        self.timestamps || self.words || self.utterances || self.paragraphs
+    }
+
+    pub fn raw_linear16(&self) -> bool {
+        self.encoding == Some(AudioEncoding::Linear16)
     }
 }
 
@@ -71,7 +172,7 @@ pub struct ListenResponse {
 
 #[derive(Debug, Serialize)]
 pub struct Metadata {
-    pub transaction_key: &'static str,
+    pub transaction_key: String,
     pub request_id: String,
     pub sha256: String,
     pub created: String,
@@ -81,7 +182,7 @@ pub struct Metadata {
     pub model_info: BTreeMap<String, ModelInfo>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Clone)]
 pub struct ModelInfo {
     pub name: String,
     pub version: String,
@@ -110,7 +211,7 @@ pub struct Alternative {
     pub paragraphs: Option<ParagraphResults>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Clone)]
 pub struct Word {
     pub word: String,
     pub start: f64,
@@ -162,6 +263,32 @@ pub struct UtteranceWord {
     pub punctuated_word: String,
 }
 
+pub fn default_model_info(model: &str) -> (String, BTreeMap<String, ModelInfo>) {
+    let model_id = model.to_string();
+    let mut model_info = BTreeMap::new();
+    model_info.insert(
+        model_id.clone(),
+        ModelInfo {
+            name: model.to_string(),
+            version: "local".into(),
+            arch: "parakeet-tdt-onnx".into(),
+        },
+    );
+    (model_id, model_info)
+}
+
+pub(crate) fn words_from_committed(committed_words: &[CommittedWord]) -> Vec<Word> {
+    committed_words
+        .iter()
+        .map(|word| Word {
+            word: word.word.clone(),
+            start: word.start_ms as f64 / 1000.0,
+            end: word.end_ms as f64 / 1000.0,
+            confidence: 0.0,
+        })
+        .collect()
+}
+
 pub fn build_response(
     request_id: String,
     sha256: String,
@@ -171,15 +298,7 @@ pub fn build_response(
     options: &ListenOptions,
 ) -> ListenResponse {
     let transcript = transcript_from_words(committed_words, fallback_transcript);
-    let words = committed_words
-        .iter()
-        .map(|word| Word {
-            word: word.word.clone(),
-            start: word.start_ms as f64 / 1000.0,
-            end: word.end_ms as f64 / 1000.0,
-            confidence: 0.0,
-        })
-        .collect::<Vec<_>>();
+    let words = words_from_committed(committed_words);
 
     let utterances = if options.utterances || options.paragraphs {
         let utterances = build_utterances(committed_words, &transcript, duration_secs, options);
@@ -198,20 +317,11 @@ pub fn build_response(
         None
     };
 
-    let model_id = options.model.clone();
-    let mut model_info = BTreeMap::new();
-    model_info.insert(
-        model_id.clone(),
-        ModelInfo {
-            name: options.model.clone(),
-            version: "local".into(),
-            arch: "parakeet-tdt-onnx".into(),
-        },
-    );
+    let (model_id, model_info) = default_model_info(&options.model);
 
     ListenResponse {
         metadata: Metadata {
-            transaction_key: "deprecated",
+            transaction_key: request_id.clone(),
             request_id,
             sha256,
             created: Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true),
@@ -362,14 +472,14 @@ fn build_paragraphs(
     }
 }
 
-fn transcript_from_words(committed_words: &[CommittedWord], fallback: &str) -> String {
+pub(crate) fn transcript_from_words(committed_words: &[CommittedWord], fallback: &str) -> String {
     if committed_words.is_empty() {
         return fallback.trim().to_string();
     }
     join_words(committed_words.iter().map(|word| word.word.as_str()))
 }
 
-fn join_words<'a>(words: impl Iterator<Item = &'a str>) -> String {
+pub(crate) fn join_words<'a>(words: impl Iterator<Item = &'a str>) -> String {
     let mut transcript = String::new();
     for word in words {
         append_word(&mut transcript, word);
@@ -377,7 +487,7 @@ fn join_words<'a>(words: impl Iterator<Item = &'a str>) -> String {
     transcript
 }
 
-fn append_word(transcript: &mut String, word: &str) {
+pub(crate) fn append_word(transcript: &mut String, word: &str) {
     if transcript.is_empty() {
         transcript.push_str(word);
         return;
@@ -391,7 +501,7 @@ fn append_word(transcript: &mut String, word: &str) {
     }
 }
 
-fn attaches_to_previous(word: &str) -> bool {
+pub(crate) fn attaches_to_previous(word: &str) -> bool {
     matches!(
         word,
         "." | "," | "!" | "?" | ";" | ":" | "%" | ")" | "]" | "}" | "'"
@@ -399,7 +509,7 @@ fn attaches_to_previous(word: &str) -> bool {
         || word.starts_with('’')
 }
 
-fn ends_sentence(word: &str) -> bool {
+pub(crate) fn ends_sentence(word: &str) -> bool {
     word.ends_with('.') || word.ends_with('!') || word.ends_with('?')
 }
 
@@ -417,6 +527,42 @@ fn parse_bool(value: &str) -> Option<bool> {
         "false" | "0" | "no" | "off" => Some(false),
         _ => None,
     }
+}
+
+fn parse_u64(value: &str) -> Option<u64> {
+    value.trim().parse::<u64>().ok()
+}
+
+fn parse_u8(value: &str) -> Option<u8> {
+    value.trim().parse::<u8>().ok()
+}
+
+fn parse_sample_rate(value: &str) -> Option<u32> {
+    let sample_rate = value.trim().parse::<u32>().ok()?;
+    (sample_rate > 0).then_some(sample_rate)
+}
+
+fn parse_encoding(value: &str) -> Option<AudioEncoding> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "linear16" | "s16le" => Some(AudioEncoding::Linear16),
+        _ => None,
+    }
+}
+
+fn get_request_value(req: &Request<()>, header_name: &str, query_name: &str) -> Option<String> {
+    if let Some(value) = req.headers().get(header_name) {
+        if let Ok(value) = value.to_str() {
+            return Some(value.to_string());
+        }
+    }
+
+    let query = req.uri().query()?;
+    for (key, value) in form_urlencoded::parse(query.as_bytes()) {
+        if key == query_name {
+            return Some(value.into_owned());
+        }
+    }
+    None
 }
 
 #[cfg(test)]
@@ -459,15 +605,22 @@ mod tests {
     #[test]
     fn parses_query_flags() {
         let config = test_config();
-        let options = ListenOptions::from_query(
-            Some("utterances=true&paragraphs=1&utt_split=1.5&language=fr&model=nova"),
-            &config,
-        );
+        let req = Request::builder()
+            .uri("/v1/listen?utterances=true&paragraphs=1&utt_split=1.5&language=fr&model=nova&timestamps=true&encoding=linear16&sample_rate=8000&channels=2&endpointing=250")
+            .body(())
+            .unwrap();
+        let options = ListenOptions::from_request(&req, &config);
         assert!(options.utterances);
         assert!(options.paragraphs);
+        assert!(options.timestamps);
+        assert!(options.words);
         assert_eq!(options.utterance_split_secs, 1.5);
         assert_eq!(options.language, "fr");
         assert_eq!(options.model, "nova");
+        assert_eq!(options.encoding, Some(AudioEncoding::Linear16));
+        assert_eq!(options.sample_rate_hz, Some(8_000));
+        assert_eq!(options.channels, 2);
+        assert_eq!(options.endpointing_ms, Some(250));
     }
 
     #[test]
@@ -493,5 +646,18 @@ mod tests {
             },
         ];
         assert_eq!(transcript_from_words(&words, ""), "hello, world");
+    }
+
+    #[test]
+    fn request_headers_override_query_for_word_flags() {
+        let config = test_config();
+        let req = Request::builder()
+            .uri("/v1/listen?timestamps=true")
+            .header("timestamps", "false")
+            .body(())
+            .unwrap();
+        let options = ListenOptions::from_request(&req, &config);
+        assert!(!options.timestamps);
+        assert!(!options.words);
     }
 }

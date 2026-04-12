@@ -50,6 +50,14 @@ impl AudioChunker {
         self.stride_samples
     }
 
+    pub fn pending_samples(&self) -> &[f32] {
+        &self.pending
+    }
+
+    pub fn pending_start_sample(&self) -> usize {
+        self.start_sample
+    }
+
     pub fn push(&mut self, samples: &[f32]) {
         self.pending.extend_from_slice(samples);
     }
@@ -73,9 +81,12 @@ impl AudioChunker {
             self.pending.clear();
             return None;
         }
+        let samples = std::mem::take(&mut self.pending);
+        let start_sample = self.start_sample;
+        self.start_sample += samples.len();
         Some(AudioWindow {
-            samples: std::mem::take(&mut self.pending),
-            start_sample: self.start_sample,
+            samples,
+            start_sample,
             is_final: true,
         })
     }

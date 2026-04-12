@@ -4,6 +4,8 @@ pub mod chunking;
 pub mod config;
 pub mod deepgram;
 pub mod ingress;
+pub mod pcm;
+pub mod protocol;
 pub mod router;
 #[cfg(feature = "gpu-backend")]
 pub mod worker;
@@ -21,7 +23,7 @@ use crate::asr::AsrBackend;
 use crate::config::AppConfig;
 #[cfg(feature = "gpu-backend")]
 use crate::config::AppRole;
-use crate::ingress::ListenIngress;
+use crate::ingress::{ListenIngress, ListenIngressWebSocketHandler};
 use crate::router::AppRouter;
 #[cfg(feature = "gpu-backend")]
 use crate::worker::WorkerState;
@@ -122,14 +124,25 @@ pub async fn run(config: AppConfig) -> Result<()> {
         .as_ref()
         .filter(|_| config.role.serves_listen())
         .map(|upload_service| Arc::new(ListenIngress::new(config.clone(), upload_service.clone())));
-    let router = Box::new(AppRouter::new(upload_router, listen_ingress));
+    let listen_ws = listen_ingress
+        .as_ref()
+        .map(|ingress| Arc::new(ListenIngressWebSocketHandler::new(ingress.clone())));
+
+    let router = Box::new(AppRouter::new(
+        config.clone(),
+        upload_router,
+        listen_ingress,
+        listen_ws.clone(),
+    ));
+
+    let enable_websocket = listen_ws.is_some();
 
     let server = H2H3Server::builder()
         .with_tls(cert_b64, key_b64)
         .with_port(config.port)
         .enable_h2(true)
         .enable_h3(config.enable_h3)
-        .enable_websocket(false)
+        .enable_websocket(enable_websocket)
         .with_router(router)
         .build()
         .context("failed to build server")?;

@@ -29,10 +29,8 @@ spec:
           requiredDuringSchedulingIgnoredDuringExecution:
             nodeSelectorTerms:
               - matchExpressions:
-                  - key: node.kubernetes.io/instance-type
-                    operator: NotIn
-                    values:
-                      - g2-gpu-rtx4000a1-s
+                  - key: nvidia.com/gpu.present
+                    operator: DoesNotExist
       containers:
         - name: ingress
           image: asr-registry.wavey.ai/asr-api-ingress:main

@@ -18,6 +18,8 @@ clap = { version = "4.5", features = ["derive", "env"] }
 crossbeam-channel = "0.5"
 dotenvy = "0.15"
 futures-util = "0.3"
+hyper = { version = "1", features = ["full"] }
+hyper-util = { version = "0.1", features = ["full"] }
 http = "1"
 http-pack = { git = "https://github.com/wavey-ai/http-pack.git", default-features = false }
 ndarray = "0.17"
@@ -28,9 +30,10 @@ sha2 = "0.10"
 soundkit = { git = "https://github.com/wavey-ai/soundkit.git", rev = "58711bc830fc00098bf3af7d57d0f8fc42da1e05", package = "soundkit" }
 soundkit-decoder = { git = "https://github.com/wavey-ai/soundkit.git", rev = "58711bc830fc00098bf3af7d57d0f8fc42da1e05", package = "soundkit-decoder" }
 tokio = { version = "1.45", features = ["full"] }
+tokio-tungstenite = { version = "0.27", features = ["rustls-tls-webpki-roots"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
-upload-response = { git = "https://github.com/wavey-ai/web-services.git", package = "upload-response", rev = "12acce3c4514093011a4463e471baf4a06264ecd" }
+upload-response = { git = "https://github.com/wavey-ai/web-services.git", package = "upload-response", rev = "6c819b5c8287a074ec991b970a9023ff4e06b41f" }
 url = "2.5"
 uuid = { version = "1", features = ["v4"] }
-web-service = { git = "https://github.com/wavey-ai/web-services.git", package = "web-service", rev = "12acce3c4514093011a4463e471baf4a06264ecd" }
+web-service = { git = "https://github.com/wavey-ai/web-services.git", package = "web-service", rev = "6c819b5c8287a074ec991b970a9023ff4e06b41f" }

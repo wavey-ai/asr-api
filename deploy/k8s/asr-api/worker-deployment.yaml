@@ -36,10 +36,10 @@ spec:
           requiredDuringSchedulingIgnoredDuringExecution:
             nodeSelectorTerms:
               - matchExpressions:
-                  - key: node.kubernetes.io/instance-type
+                  - key: nvidia.com/gpu.present
                     operator: In
                     values:
-                      - g2-gpu-rtx4000a1-s
+                      - "true"
       initContainers:
         - name: verify-model
           image: busybox:1.36

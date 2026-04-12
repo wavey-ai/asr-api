@@ -153,6 +153,8 @@ dependencies = [
  "futures-util",
  "http",
  "http-pack",
+ "hyper",
+ "hyper-util",
  "ndarray 0.17.2",
  "reqwest",
  "serde",
@@ -161,6 +163,7 @@ dependencies = [
  "soundkit",
  "soundkit-decoder",
  "tokio",
+ "tokio-tungstenite",
  "tracing",
  "tracing-subscriber",
  "upload-response",
@@ -3729,7 +3732,7 @@ checksum = "6d49784317cd0d1ee7ec5c716dd598ec5b4483ea832a2dced265471cc0f690ae"
 [[package]]
 name = "upload-response"
 version = "0.1.0"
-source = "git+https://github.com/wavey-ai/web-services.git?rev=12acce3c4514093011a4463e471baf4a06264ecd#12acce3c4514093011a4463e471baf4a06264ecd"
+source = "git+https://github.com/wavey-ai/web-services.git?rev=6c819b5c8287a074ec991b970a9023ff4e06b41f#6c819b5c8287a074ec991b970a9023ff4e06b41f"
 dependencies = [
  "async-trait",
  "bytes",
@@ -3981,7 +3984,7 @@ dependencies = [
 [[package]]
 name = "web-service"
 version = "0.1.0"
-source = "git+https://github.com/wavey-ai/web-services.git?rev=12acce3c4514093011a4463e471baf4a06264ecd#12acce3c4514093011a4463e471baf4a06264ecd"
+source = "git+https://github.com/wavey-ai/web-services.git?rev=6c819b5c8287a074ec991b970a9023ff4e06b41f#6c819b5c8287a074ec991b970a9023ff4e06b41f"
 dependencies = [
  "anyhow",
  "async-trait",
