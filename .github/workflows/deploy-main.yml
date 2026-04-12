@@ -183,71 +183,71 @@ jobs:
               --dry-run=client -o yaml | kubectl apply -f -
 
             cat <<'EOF' | kubectl apply -f -
-apiVersion: batch/v1
-kind: Job
-metadata:
-  name: transcriber-model-sync
-  namespace: transcriber
-spec:
-  ttlSecondsAfterFinished: 300
-  backoffLimit: 1
-  template:
-    spec:
-      restartPolicy: Never
-      containers:
-        - name: sync
-          image: alpine:3.20
-          command:
-            - sh
-            - -lc
-            - |
-              set -euo pipefail
-              apk add --no-cache ca-certificates curl >/dev/null
-              archive="/tmp/parakeet-model.tar.gz"
-              scratch_dir="/tmp/parakeet-model"
-              target_dir="/var/lib/transcriber/models/parakeet-tdt"
-              rm -rf "$scratch_dir" "$target_dir"
-              mkdir -p "$scratch_dir" "$target_dir"
-              curl -fsSL "$MODEL_TARBALL_URL" -o "$archive"
-              tar -xzf "$archive" -C "$scratch_dir"
-              source_dir="$scratch_dir"
-              if [ ! -f "$source_dir/encoder.onnx" ] && [ ! -f "$source_dir/encoder.fp16.onnx" ] && [ ! -f "$source_dir/encoder.int8.onnx" ]; then
-                candidate="$(find "$scratch_dir" -mindepth 1 -maxdepth 4 -type f \( -name encoder.onnx -o -name encoder.fp16.onnx -o -name encoder.int8.onnx \) | head -n 1)"
-                [ -n "$candidate" ] || exit 1
-                source_dir="$(dirname "$candidate")"
-              fi
-              copy_first() {
-                dest_dir="$1"
-                shift
-                for name in "$@"; do
-                  if [ -f "$source_dir/$name" ]; then
-                    cp "$source_dir/$name" "$dest_dir/"
-                    return 0
-                  fi
-                done
-                return 1
-              }
+            apiVersion: batch/v1
+            kind: Job
+            metadata:
+              name: transcriber-model-sync
+              namespace: transcriber
+            spec:
+              ttlSecondsAfterFinished: 300
+              backoffLimit: 1
+              template:
+                spec:
+                  restartPolicy: Never
+                  containers:
+                    - name: sync
+                      image: alpine:3.20
+                      command:
+                        - sh
+                        - -lc
+                        - |
+                          set -euo pipefail
+                          apk add --no-cache ca-certificates curl >/dev/null
+                          archive="/tmp/parakeet-model.tar.gz"
+                          scratch_dir="/tmp/parakeet-model"
+                          target_dir="/var/lib/transcriber/models/parakeet-tdt"
+                          rm -rf "$scratch_dir" "$target_dir"
+                          mkdir -p "$scratch_dir" "$target_dir"
+                          curl -fsSL "$MODEL_TARBALL_URL" -o "$archive"
+                          tar -xzf "$archive" -C "$scratch_dir"
+                          source_dir="$scratch_dir"
+                          if [ ! -f "$source_dir/encoder.onnx" ] && [ ! -f "$source_dir/encoder.fp16.onnx" ] && [ ! -f "$source_dir/encoder.int8.onnx" ]; then
+                            candidate="$(find "$scratch_dir" -mindepth 1 -maxdepth 4 -type f \( -name encoder.onnx -o -name encoder.fp16.onnx -o -name encoder.int8.onnx \) | head -n 1)"
+                            [ -n "$candidate" ] || exit 1
+                            source_dir="$(dirname "$candidate")"
+                          fi
+                          copy_first() {
+                            dest_dir="$1"
+                            shift
+                            for name in "$@"; do
+                              if [ -f "$source_dir/$name" ]; then
+                                cp "$source_dir/$name" "$dest_dir/"
+                                return 0
+                              fi
+                            done
+                            return 1
+                          }
 
-              copy_first "$target_dir" encoder.fp16.onnx encoder.onnx encoder.int8.onnx
-              copy_first "$target_dir" decoder.fp16.onnx decoder.onnx decoder.int8.onnx
-              copy_first "$target_dir" joint.enc.fp16.onnx joint.enc.onnx joint.enc.int8.onnx
-              copy_first "$target_dir" joint.pred.fp16.onnx joint.pred.onnx joint.pred.int8.onnx
-              copy_first "$target_dir" joint.joint_net.fp16.onnx joint.joint_net.onnx joint.joint_net.int8.onnx
-              copy_first "$target_dir" tokens.txt vocab.txt
-          env:
-            - name: MODEL_TARBALL_URL
-              valueFrom:
-                secretKeyRef:
-                  name: transcriber-model-sync
-                  key: model-url
-          volumeMounts:
-            - name: model
-              mountPath: /var/lib/transcriber/models
-      volumes:
-        - name: model
-          persistentVolumeClaim:
-            claimName: transcriber-model
-EOF
+                          copy_first "$target_dir" encoder.fp16.onnx encoder.onnx encoder.int8.onnx
+                          copy_first "$target_dir" decoder.fp16.onnx decoder.onnx decoder.int8.onnx
+                          copy_first "$target_dir" joint.enc.fp16.onnx joint.enc.onnx joint.enc.int8.onnx
+                          copy_first "$target_dir" joint.pred.fp16.onnx joint.pred.onnx joint.pred.int8.onnx
+                          copy_first "$target_dir" joint.joint_net.fp16.onnx joint.joint_net.onnx joint.joint_net.int8.onnx
+                          copy_first "$target_dir" tokens.txt vocab.txt
+                      env:
+                        - name: MODEL_TARBALL_URL
+                          valueFrom:
+                            secretKeyRef:
+                              name: transcriber-model-sync
+                              key: model-url
+                      volumeMounts:
+                        - name: model
+                          mountPath: /var/lib/transcriber/models
+                  volumes:
+                    - name: model
+                      persistentVolumeClaim:
+                        claimName: transcriber-model
+            EOF
 
             kubectl -n "$TRANSCRIBER_NAMESPACE" wait --for=condition=complete job/transcriber-model-sync --timeout=20m
             kubectl -n "$TRANSCRIBER_NAMESPACE" logs job/transcriber-model-sync
