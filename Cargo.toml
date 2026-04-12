@@ -25,8 +25,8 @@ reqwest = { version = "0.12", features = ["rustls-tls", "http2"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 sha2 = "0.10"
-soundkit = { git = "https://github.com/wavey-ai/soundkit.git", rev = "95cc81baa455dbaff48e1c8bed25067462b6966c", package = "soundkit" }
-soundkit-decoder = { git = "https://github.com/wavey-ai/soundkit.git", rev = "95cc81baa455dbaff48e1c8bed25067462b6966c", package = "soundkit-decoder" }
+soundkit = { git = "https://github.com/wavey-ai/soundkit.git", rev = "58711bc830fc00098bf3af7d57d0f8fc42da1e05", package = "soundkit" }
+soundkit-decoder = { git = "https://github.com/wavey-ai/soundkit.git", rev = "58711bc830fc00098bf3af7d57d0f8fc42da1e05", package = "soundkit-decoder" }
 tokio = { version = "1.45", features = ["full"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }

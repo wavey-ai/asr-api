@@ -91,11 +91,9 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: |
             type=local,src=${{ matrix.local_cache }}
-            type=gha,scope=${{ matrix.cache_scope }}
             type=registry,ref=${{ matrix.image }}:buildcache
           cache-to: |
             type=local,dest=${{ matrix.local_cache }}-new,mode=max
-            type=gha,scope=${{ matrix.cache_scope }},mode=max
             type=registry,ref=${{ matrix.image }}:buildcache,mode=max
           secrets: |
             github_token=${{ secrets.WAVEY_AI_GH_TOKEN }}
