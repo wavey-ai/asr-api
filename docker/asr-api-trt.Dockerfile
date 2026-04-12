@@ -82,16 +82,12 @@ FROM ${CUDA_RUNTIME_IMAGE} AS runtime
 
 ARG DEBIAN_FRONTEND=noninteractive
 ARG PYTHON_SITE_PACKAGES
-ARG TORCH_VERSION
-ARG TORCH_INDEX_URL
 ARG TENSORRT_REPO_DEB_URL
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
       ca-certificates \
       curl \
-      python3 \
-      python3-pip \
     && rm -rf /var/lib/apt/lists/*
 
 RUN curl -fsSL "${TENSORRT_REPO_DEB_URL}" -o /tmp/tensorrt.deb \
@@ -102,20 +98,17 @@ RUN curl -fsSL "${TENSORRT_REPO_DEB_URL}" -o /tmp/tensorrt.deb \
     && apt-get install -y --no-install-recommends tensorrt \
     && rm -rf /var/lib/apt/lists/*
 
-ENV PIP_BREAK_SYSTEM_PACKAGES=1
-RUN python3 -m pip install --no-cache-dir --index-url ${TORCH_INDEX_URL} torch==${TORCH_VERSION}
-
-ENV LIBTORCH_USE_PYTORCH=1
-ENV LIBTORCH_BYPASS_VERSION_CHECK=1
-ENV LD_LIBRARY_PATH=/usr/local/lib:${PYTHON_SITE_PACKAGES}/torch/lib:/usr/lib/x86_64-linux-gnu:/usr/local/cuda/lib64
-ENV LD_PRELOAD=${PYTHON_SITE_PACKAGES}/torch/lib/libc10_cuda.so:${PYTHON_SITE_PACKAGES}/torch/lib/libtorch_cuda.so:${PYTHON_SITE_PACKAGES}/torch/lib/libtorch_cuda_linalg.so
-ENV RUST_LOG=asr_api=info,web_service=info,upload_response=info
-
 COPY --from=build /usr/local/lib/libopus.so* /usr/local/lib/
+COPY --from=build ${PYTHON_SITE_PACKAGES}/torch/lib /opt/libtorch/lib
 COPY --from=build /opt/asr-runtime-libs/ /usr/local/lib/
 COPY --from=build /app/target/release/asr-api /usr/local/bin/asr-api
 
-RUN ldconfig
+ENV LIBTORCH_USE_PYTORCH=1
+ENV LIBTORCH_BYPASS_VERSION_CHECK=1
+ENV LIBTORCH=/opt/libtorch
+ENV LD_LIBRARY_PATH=/usr/local/lib:/opt/libtorch/lib:/usr/lib/x86_64-linux-gnu:/usr/local/cuda/lib64
+ENV LD_PRELOAD=/opt/libtorch/lib/libc10_cuda.so:/opt/libtorch/lib/libtorch_cuda.so:/opt/libtorch/lib/libtorch_cuda_linalg.so
+ENV RUST_LOG=asr_api=info,web_service=info,upload_response=info
 
 EXPOSE 8443
 
