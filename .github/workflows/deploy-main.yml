@@ -33,6 +33,11 @@ jobs:
         with:
           fetch-depth: 2
 
+      - name: Configure git auth for private dependencies
+        run: |
+          set -euo pipefail
+          git config --global url."https://x-access-token:${{ secrets.WAVEY_AI_GH_TOKEN }}@github.com/".insteadOf https://github.com/
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
