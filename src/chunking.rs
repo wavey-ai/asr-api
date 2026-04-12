@@ -1,21 +1,21 @@
-use crate::config::PARAKEET_SAMPLE_RATE;
+use crate::config::ASR_SAMPLE_RATE;
 
-const SAMPLE_RATE_F64: f64 = PARAKEET_SAMPLE_RATE as f64;
+const SAMPLE_RATE_F64: f64 = ASR_SAMPLE_RATE as f64;
 const DEDUPE_EPSILON_MS: u64 = 25;
 
-#[derive(Debug, Clone, PartialEq)]
-pub struct TimedSegment {
-    pub text: String,
-    pub start_secs: f64,
-    pub end_secs: f64,
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TimedWord {
+    pub word: String,
+    pub start_ms: u32,
+    pub end_ms: u32,
 }
 
-#[derive(Debug, Clone, PartialEq)]
-pub struct EmittedSegment {
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CommittedWord {
     pub index: u64,
     pub start_ms: u64,
     pub end_ms: u64,
-    pub text: String,
+    pub word: String,
 }
 
 #[derive(Debug, Clone)]
@@ -44,10 +44,6 @@ impl AudioChunker {
             start_sample: 0,
             pending: Vec::new(),
         }
-    }
-
-    pub fn chunk_samples(&self) -> usize {
-        self.chunk_samples
     }
 
     pub fn stride_samples(&self) -> usize {
@@ -86,33 +82,33 @@ impl AudioChunker {
 }
 
 #[derive(Debug, Default)]
-pub struct SegmentCommitter {
+pub struct WordCommitter {
     next_index: u64,
     last_emitted_end_ms: Option<u64>,
 }
 
-impl SegmentCommitter {
+impl WordCommitter {
     pub fn commit(
         &mut self,
         window_start_sample: usize,
         stable_samples: usize,
         is_final: bool,
-        segments: &[TimedSegment],
-    ) -> Vec<EmittedSegment> {
-        let stable_limit_secs = stable_samples as f64 / SAMPLE_RATE_F64;
+        words: &[TimedWord],
+    ) -> Vec<CommittedWord> {
+        let stable_limit_ms = sample_to_ms(stable_samples);
         let window_start_ms = sample_to_ms(window_start_sample);
         let mut emitted = Vec::new();
 
-        for segment in segments {
-            if segment.text.trim().is_empty() {
+        for word in words {
+            if word.word.trim().is_empty() {
                 continue;
             }
-            if !is_final && segment.end_secs > stable_limit_secs {
+            if !is_final && u64::from(word.end_ms) > stable_limit_ms {
                 continue;
             }
 
-            let start_ms = window_start_ms + seconds_to_ms(segment.start_secs);
-            let end_ms = window_start_ms + seconds_to_ms(segment.end_secs);
+            let start_ms = window_start_ms + u64::from(word.start_ms);
+            let end_ms = window_start_ms + u64::from(word.end_ms);
 
             if let Some(last_end_ms) = self.last_emitted_end_ms {
                 if end_ms <= last_end_ms.saturating_add(DEDUPE_EPSILON_MS) {
@@ -120,11 +116,11 @@ impl SegmentCommitter {
                 }
             }
 
-            emitted.push(EmittedSegment {
+            emitted.push(CommittedWord {
                 index: self.next_index,
                 start_ms,
                 end_ms,
-                text: segment.text.clone(),
+                word: word.word.clone(),
             });
             self.next_index += 1;
             self.last_emitted_end_ms = Some(end_ms);
@@ -132,18 +128,10 @@ impl SegmentCommitter {
 
         emitted
     }
-
-    pub fn emitted_count(&self) -> u64 {
-        self.next_index
-    }
 }
 
 fn sample_to_ms(sample: usize) -> u64 {
     ((sample as f64 / SAMPLE_RATE_F64) * 1000.0).round() as u64
-}
-
-fn seconds_to_ms(seconds: f64) -> u64 {
-    (seconds * 1000.0).round() as u64
 }
 
 #[cfg(test)]
@@ -169,48 +157,48 @@ mod tests {
 
     #[test]
     fn committer_skips_unstable_overlap_and_dedupes_final_tail() {
-        let mut committer = SegmentCommitter::default();
+        let mut committer = WordCommitter::default();
 
         let first = committer.commit(
             0,
-            8 * PARAKEET_SAMPLE_RATE as usize,
+            8 * ASR_SAMPLE_RATE as usize,
             false,
             &[
-                TimedSegment {
-                    text: "alpha".into(),
-                    start_secs: 0.2,
-                    end_secs: 1.0,
+                TimedWord {
+                    word: "alpha".into(),
+                    start_ms: 200,
+                    end_ms: 1_000,
                 },
-                TimedSegment {
-                    text: "beta".into(),
-                    start_secs: 7.5,
-                    end_secs: 8.4,
+                TimedWord {
+                    word: "beta".into(),
+                    start_ms: 7_500,
+                    end_ms: 8_400,
                 },
             ],
         );
         assert_eq!(first.len(), 1);
-        assert_eq!(first[0].text, "alpha");
+        assert_eq!(first[0].word, "alpha");
 
         let second = committer.commit(
-            8 * PARAKEET_SAMPLE_RATE as usize,
-            8 * PARAKEET_SAMPLE_RATE as usize,
+            8 * ASR_SAMPLE_RATE as usize,
+            8 * ASR_SAMPLE_RATE as usize,
             true,
             &[
-                TimedSegment {
-                    text: "beta".into(),
-                    start_secs: 0.0,
-                    end_secs: 0.4,
+                TimedWord {
+                    word: "beta".into(),
+                    start_ms: 0,
+                    end_ms: 400,
                 },
-                TimedSegment {
-                    text: "gamma".into(),
-                    start_secs: 1.0,
-                    end_secs: 1.8,
+                TimedWord {
+                    word: "gamma".into(),
+                    start_ms: 1_000,
+                    end_ms: 1_800,
                 },
             ],
         );
 
         assert_eq!(second.len(), 2);
-        assert_eq!(second[0].text, "beta");
-        assert_eq!(second[1].text, "gamma");
+        assert_eq!(second[0].word, "beta");
+        assert_eq!(second[1].word, "gamma");
     }
 }

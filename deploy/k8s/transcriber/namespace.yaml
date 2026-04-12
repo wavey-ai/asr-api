@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: transcriber
+  labels:
+    app.kubernetes.io/name: transcriber
+    app.kubernetes.io/part-of: transcriber

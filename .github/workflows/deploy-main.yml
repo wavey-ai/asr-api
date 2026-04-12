@@ -1,0 +1,263 @@
+name: Deploy Transcriber
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: read
+
+concurrency:
+  group: deploy-transcriber-main
+  cancel-in-progress: true
+
+env:
+  TRANSCRIBER_CLUSTER_LABEL: wavey
+  TRANSCRIBER_NAMESPACE: transcriber
+  TRANSCRIBER_DOMAIN: transcribe.wavey.ai
+  TRANSCRIBER_IMAGE: ghcr.io/wavey-ai/transcriber
+  TRANSCRIBER_MODEL_PVC: transcriber-model
+  TRANSCRIBER_MODEL_ROOT: /var/lib/transcriber/models
+  TRANSCRIBER_MODEL_DIR: /var/lib/transcriber/models/parakeet-tdt
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Set up kubectl
+        uses: azure/setup-kubectl@v4
+
+      - name: Validate deploy artifacts
+        run: |
+          set -euo pipefail
+          cargo check --locked
+          python3 -m py_compile deploy/linode_api.py
+          kubectl kustomize deploy/k8s/transcriber >/dev/null
+
+      - name: Detect image changes
+        id: changes
+        run: |
+          set -euo pipefail
+
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "wait_image=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          before="${{ github.event.before }}"
+          if [ "$before" = "0000000000000000000000000000000000000000" ]; then
+            before=""
+          fi
+
+          if [ -n "$before" ] && git cat-file -e "$before^{commit}" 2>/dev/null; then
+            changed_files="$(git diff --name-only "$before" "$GITHUB_SHA")"
+          elif git rev-parse --verify HEAD^ >/dev/null 2>&1; then
+            changed_files="$(git diff --name-only HEAD^ HEAD)"
+          else
+            changed_files="$(git ls-files)"
+          fi
+
+          if [ -z "$changed_files" ]; then
+            changed_files="$(git show --pretty='' --name-only "$GITHUB_SHA")"
+          fi
+
+          wait_image=false
+          while IFS= read -r path; do
+            [ -n "$path" ] || continue
+            case "$path" in
+              .github/workflows/build-image.yml|.dockerignore|docker/*|docker/**|src/*|src/**|Cargo.toml|Cargo.lock)
+                wait_image=true
+                ;;
+            esac
+          done <<<"$changed_files"
+
+          echo "wait_image=$wait_image" >> "$GITHUB_OUTPUT"
+          echo "Changed files:"
+          printf '  %s\n' $changed_files
+          echo "wait_image=$wait_image"
+
+      - name: Resolve LKE cluster
+        id: cluster
+        env:
+          LINODE_TOKEN: ${{ secrets.LINODE_TOKEN }}
+        run: |
+          set -euo pipefail
+          python3 deploy/linode_api.py cluster-id \
+            --label "$TRANSCRIBER_CLUSTER_LABEL" \
+            --github-output "$GITHUB_OUTPUT"
+
+      - name: Fetch cluster kubeconfig
+        id: kubeconfig
+        env:
+          LINODE_TOKEN: ${{ secrets.LINODE_TOKEN }}
+        run: |
+          set -euo pipefail
+          kubeconfig_path="$RUNNER_TEMP/wavey-kubeconfig.yaml"
+          python3 deploy/linode_api.py cluster-kubeconfig \
+            --cluster-id "${{ steps.cluster.outputs.cluster_id }}" \
+            --output "$kubeconfig_path" \
+            --github-output "$GITHUB_OUTPUT"
+
+      - name: Deploy transcriber to LKE
+        env:
+          KUBECONFIG: ${{ steps.kubeconfig.outputs.kubeconfig }}
+          MODEL_TARBALL_URL: ${{ secrets.TRANSCRIBER_MODEL_TARBALL_URL }}
+        run: |
+          set -euo pipefail
+
+          kubectl apply -f deploy/k8s/transcriber/namespace.yaml
+
+          openssl req -x509 -nodes -newkey rsa:2048 -sha256 \
+            -keyout "$RUNNER_TEMP/transcriber.key" \
+            -out "$RUNNER_TEMP/transcriber.crt" \
+            -days 30 \
+            -subj "/CN=transcriber" \
+            -addext "subjectAltName=DNS:transcriber,DNS:transcriber.${TRANSCRIBER_NAMESPACE}.svc.cluster.local"
+
+          openssl req -x509 -nodes -newkey rsa:2048 -sha256 \
+            -keyout "$RUNNER_TEMP/${TRANSCRIBER_DOMAIN}.key" \
+            -out "$RUNNER_TEMP/${TRANSCRIBER_DOMAIN}.crt" \
+            -days 30 \
+            -subj "/CN=${TRANSCRIBER_DOMAIN}" \
+            -addext "subjectAltName=DNS:${TRANSCRIBER_DOMAIN}"
+
+          kubectl -n "$TRANSCRIBER_NAMESPACE" create secret docker-registry ghcr-wavey-ai \
+            --docker-server=ghcr.io \
+            --docker-username="${{ github.actor }}" \
+            --docker-password="${{ github.token }}" \
+            --dry-run=client -o yaml | kubectl apply -f -
+
+          kubectl -n "$TRANSCRIBER_NAMESPACE" create secret tls transcriber-tls \
+            --cert="$RUNNER_TEMP/transcriber.crt" \
+            --key="$RUNNER_TEMP/transcriber.key" \
+            --dry-run=client -o yaml | kubectl apply -f -
+
+          kubectl -n "$TRANSCRIBER_NAMESPACE" create secret tls transcribe-wavey-ai-tls \
+            --cert="$RUNNER_TEMP/${TRANSCRIBER_DOMAIN}.crt" \
+            --key="$RUNNER_TEMP/${TRANSCRIBER_DOMAIN}.key" \
+            --dry-run=client -o yaml | kubectl apply -f -
+
+          echo "${{ github.token }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+          wait_for_image() {
+            local image="$1"
+            local attempts="${2:-60}"
+            local delay_seconds="${3:-10}"
+            for _ in $(seq 1 "$attempts"); do
+              if docker manifest inspect "$image" >/dev/null 2>&1; then
+                return 0
+              fi
+              sleep "$delay_seconds"
+            done
+            echo "Timed out waiting for image $image" >&2
+            return 1
+          }
+
+          transcriber_image="${TRANSCRIBER_IMAGE}:main"
+          if [ "${{ steps.changes.outputs.wait_image }}" = "true" ]; then
+            short_sha="${GITHUB_SHA::7}"
+            transcriber_image="${TRANSCRIBER_IMAGE}:sha-${short_sha}"
+            wait_for_image "$transcriber_image"
+          fi
+
+          kubectl apply -f deploy/k8s/transcriber/pvc.yaml
+
+          if [ -n "${MODEL_TARBALL_URL}" ]; then
+            kubectl -n "$TRANSCRIBER_NAMESPACE" delete job transcriber-model-sync --ignore-not-found=true --wait=true || true
+            kubectl -n "$TRANSCRIBER_NAMESPACE" create secret generic transcriber-model-sync \
+              --from-literal=model-url="$MODEL_TARBALL_URL" \
+              --dry-run=client -o yaml | kubectl apply -f -
+
+            cat <<'EOF' | kubectl apply -f -
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: transcriber-model-sync
+  namespace: transcriber
+spec:
+  ttlSecondsAfterFinished: 300
+  backoffLimit: 1
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: sync
+          image: alpine:3.20
+          command:
+            - sh
+            - -lc
+            - |
+              set -euo pipefail
+              apk add --no-cache ca-certificates curl >/dev/null
+              archive="/tmp/parakeet-model.tar.gz"
+              scratch_dir="/tmp/parakeet-model"
+              target_dir="/var/lib/transcriber/models/parakeet-tdt"
+              rm -rf "$scratch_dir" "$target_dir"
+              mkdir -p "$scratch_dir" "$target_dir"
+              curl -fsSL "$MODEL_TARBALL_URL" -o "$archive"
+              tar -xzf "$archive" -C "$scratch_dir"
+              source_dir="$scratch_dir"
+              if [ ! -f "$source_dir/encoder.onnx" ] && [ ! -f "$source_dir/encoder.fp16.onnx" ] && [ ! -f "$source_dir/encoder.int8.onnx" ]; then
+                candidate="$(find "$scratch_dir" -mindepth 1 -maxdepth 4 -type f \( -name encoder.onnx -o -name encoder.fp16.onnx -o -name encoder.int8.onnx \) | head -n 1)"
+                [ -n "$candidate" ] || exit 1
+                source_dir="$(dirname "$candidate")"
+              fi
+              copy_first() {
+                dest_dir="$1"
+                shift
+                for name in "$@"; do
+                  if [ -f "$source_dir/$name" ]; then
+                    cp "$source_dir/$name" "$dest_dir/"
+                    return 0
+                  fi
+                done
+                return 1
+              }
+
+              copy_first "$target_dir" encoder.fp16.onnx encoder.onnx encoder.int8.onnx
+              copy_first "$target_dir" decoder.fp16.onnx decoder.onnx decoder.int8.onnx
+              copy_first "$target_dir" joint.enc.fp16.onnx joint.enc.onnx joint.enc.int8.onnx
+              copy_first "$target_dir" joint.pred.fp16.onnx joint.pred.onnx joint.pred.int8.onnx
+              copy_first "$target_dir" joint.joint_net.fp16.onnx joint.joint_net.onnx joint.joint_net.int8.onnx
+              copy_first "$target_dir" tokens.txt vocab.txt
+          env:
+            - name: MODEL_TARBALL_URL
+              valueFrom:
+                secretKeyRef:
+                  name: transcriber-model-sync
+                  key: model-url
+          volumeMounts:
+            - name: model
+              mountPath: /var/lib/transcriber/models
+      volumes:
+        - name: model
+          persistentVolumeClaim:
+            claimName: transcriber-model
+EOF
+
+            kubectl -n "$TRANSCRIBER_NAMESPACE" wait --for=condition=complete job/transcriber-model-sync --timeout=20m
+            kubectl -n "$TRANSCRIBER_NAMESPACE" logs job/transcriber-model-sync
+            kubectl -n "$TRANSCRIBER_NAMESPACE" delete secret transcriber-model-sync --ignore-not-found=true
+          else
+            echo "TRANSCRIBER_MODEL_TARBALL_URL not set; skipping model sync job"
+          fi
+
+          kubectl apply -k deploy/k8s/transcriber
+          kubectl -n "$TRANSCRIBER_NAMESPACE" set image deployment/transcriber transcriber="$transcriber_image"
+          kubectl -n "$TRANSCRIBER_NAMESPACE" rollout restart deployment/transcriber
+          kubectl -n "$TRANSCRIBER_NAMESPACE" rollout status deployment/transcriber --timeout=15m
+          kubectl -n "$TRANSCRIBER_NAMESPACE" get pods,svc,ingress

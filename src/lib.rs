@@ -1,7 +1,7 @@
+pub mod asr;
 pub mod chunking;
 pub mod config;
-pub mod events;
-pub mod model;
+pub mod deepgram;
 pub mod router;
 pub mod worker;
 
@@ -12,8 +12,8 @@ use tracing::info;
 use tracing_subscriber::EnvFilter;
 use web_service::{H2H3Server, Server, ServerBuilder};
 
+use crate::asr::AsrBackend;
 use crate::config::AppConfig;
-use crate::model::ModelPool;
 use crate::router::AppRouter;
 use crate::worker::WorkerState;
 
@@ -28,10 +28,18 @@ pub fn init_tracing(rust_log: &str) {
 pub async fn run(config: AppConfig) -> Result<()> {
     config.validate()?;
 
+    let model_dir = config.model_dir.clone();
+    let vocab_path = config.resolve_vocab_path()?;
     let (cert_b64, key_b64) = config.tls_base64()?;
-    let model_pool = Arc::new(ModelPool::new(&config.model_dir, config.model_instances)?);
-    let worker_state = Arc::new(WorkerState::new(config.clone(), model_pool));
-    let router = Box::new(AppRouter::new(config.clone(), worker_state));
+    let backend = Arc::new(AsrBackend::new(
+        &model_dir,
+        &vocab_path,
+        &config.device_ids,
+        config.torch_sessions,
+        config.onnx_sessions,
+    )?);
+    let worker_state = Arc::new(WorkerState::new(config.clone(), backend));
+    let router = Box::new(AppRouter::new(worker_state));
 
     let server = H2H3Server::builder()
         .with_tls(cert_b64, key_b64)
@@ -48,7 +56,11 @@ pub async fn run(config: AppConfig) -> Result<()> {
     info!(
         port = config.port,
         enable_h3 = config.enable_h3,
-        model_dir = %config.model_dir.display(),
+        model_dir = %model_dir.display(),
+        vocab_path = %vocab_path.display(),
+        device_ids = ?config.device_ids,
+        torch_sessions = config.torch_sessions,
+        onnx_sessions = config.onnx_sessions,
         chunk_seconds = config.chunk_seconds,
         overlap_seconds = config.overlap_seconds,
         "transcriber ready"

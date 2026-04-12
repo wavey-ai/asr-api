@@ -6,19 +6,24 @@ edition = "2021"
 [dependencies]
 anyhow = "1.0"
 async-trait = "0.1"
+asr-onnx = { git = "https://github.com/wavey-ai/asr-onnx.git", rev = "c09d9180a97c9f0f97a93e8b13d10c5a3c7cada5" }
+asr-torch = { git = "https://github.com/wavey-ai/asr-torch.git", rev = "f99c843b694229f34160217db9abea3d39854a64" }
 bytes = "1"
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
 clap = { version = "4.5", features = ["derive", "env"] }
+crossbeam-channel = "0.5"
 dotenvy = "0.15"
 futures-util = "0.3"
 http = "1"
-http-pack = { git = "https://github.com/wavey-ai/http-pack.git", default-features = false }
-parakeet-rs = "0.3.4"
+ndarray = "0.17"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+sha2 = "0.10"
 soundkit = { git = "https://github.com/wavey-ai/soundkit.git", rev = "95cc81baa455dbaff48e1c8bed25067462b6966c", package = "soundkit" }
 soundkit-decoder = { git = "https://github.com/wavey-ai/soundkit.git", rev = "95cc81baa455dbaff48e1c8bed25067462b6966c", package = "soundkit-decoder" }
 tokio = { version = "1.45", features = ["full"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
-upload-response = { git = "https://github.com/wavey-ai/web-services.git", rev = "df792f953e884137bba33dcb16e20cb42d10c4e6", package = "upload-response" }
+url = "2.5"
+uuid = { version = "1", features = ["v4"] }
 web-service = { git = "https://github.com/wavey-ai/web-services.git", rev = "df792f953e884137bba33dcb16e20cb42d10c4e6", package = "web-service" }
