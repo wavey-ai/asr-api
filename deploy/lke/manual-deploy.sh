@@ -39,7 +39,7 @@ openssl req -x509 -nodes -newkey rsa:2048 -sha256 \
 
 kubectl apply -f "${ASR_API_KUSTOMIZE_PATH}/namespace.yaml"
 
-kubectl -n "$ASR_API_NAMESPACE" create secret docker-registry asr-registry \
+kubectl -n "$ASR_API_NAMESPACE" create secret docker-registry ghcr-wavey-ai \
   --docker-server="$REGISTRY_SERVER" \
   --docker-username="$REGISTRY_USERNAME" \
   --docker-password="$REGISTRY_PASSWORD" \

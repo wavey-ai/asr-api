@@ -199,6 +199,101 @@ jobs:
             asr_api_worker_image="${ASR_API_WORKER_IMAGE_REPO}:sha-${short_sha}"
           fi
 
+          echo "${{ github.token }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+          wait_for_image() {
+            local image="$1"
+            local attempts="${2:-60}"
+            local delay_seconds="${3:-10}"
+            for _ in $(seq 1 "$attempts"); do
+              if docker manifest inspect "$image" >/dev/null 2>&1; then
+                return 0
+              fi
+              sleep "$delay_seconds"
+            done
+            echo "Timed out waiting for image $image" >&2
+            return 1
+          }
+
+          create_loader() {
+            local pod_name="$1"
+            local node_name="$2"
+            local namespace="$3"
+            cat <<EOF | kubectl apply -f -
+          apiVersion: v1
+          kind: Pod
+          metadata:
+            name: ${pod_name}
+            namespace: ${namespace}
+            labels:
+              wavey.ai/image-loader: "true"
+          spec:
+            nodeName: ${node_name}
+            restartPolicy: Never
+            tolerations:
+              - operator: Exists
+            containers:
+              - name: loader
+                image: debian:bookworm-slim
+                securityContext:
+                  privileged: true
+                command:
+                  - sh
+                  - -lc
+                  - |
+                    set -eu
+                    apt-get update >/dev/null
+                    apt-get install -y --no-install-recommends containerd >/dev/null
+                    sleep infinity
+                volumeMounts:
+                  - name: containerd-run
+                    mountPath: /run/containerd
+            volumes:
+              - name: containerd-run
+                hostPath:
+                  path: /run/containerd
+                  type: Directory
+          EOF
+            kubectl -n "$namespace" wait --for=condition=Ready "pod/${pod_name}" --timeout=180s
+          }
+
+          load_image() {
+            local image="$1"
+            local pod_name="$2"
+            local namespace="$3"
+            docker pull "$image"
+            docker save "$image" | kubectl -n "$namespace" exec -i "$pod_name" -- \
+              sh -lc 'cat >/tmp/image.tar && ctr --address /run/containerd/containerd.sock -n k8s.io images import /tmp/image.tar && rm /tmp/image.tar'
+          }
+
+          kubectl -n "$ASR_API_NAMESPACE" delete pod -l wavey.ai/image-loader=true --ignore-not-found=true --wait=true || true
+
+          ingress_nodes="$(kubectl get nodes -l 'node.kubernetes.io/instance-type!=g2-gpu-rtx4000a1-s' -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}')"
+          gpu_nodes="$(kubectl get nodes -l node.kubernetes.io/instance-type=g2-gpu-rtx4000a1-s -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}')"
+
+          wait_for_image "$asr_api_ingress_image"
+          wait_for_image "$asr_api_worker_image"
+
+          i=0
+          while IFS= read -r node; do
+            [ -n "$node" ] || continue
+            pod_name="asr-api-ingress-loader-${i}"
+            create_loader "$pod_name" "$node" "$ASR_API_NAMESPACE"
+            load_image "$asr_api_ingress_image" "$pod_name" "$ASR_API_NAMESPACE"
+            i=$((i + 1))
+          done <<<"$ingress_nodes"
+
+          i=0
+          while IFS= read -r node; do
+            [ -n "$node" ] || continue
+            pod_name="asr-api-worker-loader-${i}"
+            create_loader "$pod_name" "$node" "$ASR_API_NAMESPACE"
+            load_image "$asr_api_worker_image" "$pod_name" "$ASR_API_NAMESPACE"
+            i=$((i + 1))
+          done <<<"$gpu_nodes"
+
           ASR_API_INGRESS_IMAGE="$asr_api_ingress_image" \
           ASR_API_WORKER_IMAGE="$asr_api_worker_image" \
           bash deploy/lke/manual-deploy.sh
+
+          kubectl -n "$ASR_API_NAMESPACE" delete pod -l wavey.ai/image-loader=true --ignore-not-found=true --wait=true || true
