@@ -5,30 +5,32 @@ use crate::deepgram::{
     append_word, build_response, default_model_info, ends_sentence, join_words,
     words_from_committed, ListenOptions, ModelInfo, Word,
 };
-use crate::pcm::{rms_level, Linear16PcmStream};
+use crate::pcm::rms_level;
+use av_api::cached_audio::decode_cached_f32le_chunk;
+use av_api::linear16::Linear16PcmStream;
 use crate::protocol::{INTERNAL_STREAMING_MODE_HEADER, INTERNAL_STREAMING_MODE_JSONL};
 use anyhow::Result;
 use async_trait::async_trait;
 use bytes::Bytes;
 use futures_util::{SinkExt, StreamExt};
-use http::{header::CONTENT_TYPE, HeaderName, HeaderValue, Request, StatusCode};
-use http_pack::stream::{decode_frame, encode_frame, StreamFrame, StreamHeaders};
+use http::{header::CONTENT_TYPE, Request, StatusCode};
 use hyper::upgrade::Upgraded;
 use hyper_util::rt::TokioIo;
-use reqwest::{Client, StatusCode as ReqwestStatusCode};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use soundkit::audio_pipeline::{deserialize_audio, vec_i16_to_f32, vec_i32_to_f32};
-use soundkit::audio_types::{AudioData, PcmData};
+use soundkit::audio_pipeline::audio_to_mono_f32;
 use soundkit_decoder::{DecodeOptions, DecodePipeline, DecodePipelineHandle};
-use std::collections::{BTreeMap, BTreeSet, HashSet};
+use std::collections::{BTreeMap, HashSet};
 use std::sync::Arc;
-use tokio::net::lookup_host;
 use tokio::task::JoinSet;
 use tokio::time::{interval, Duration};
 use tokio_tungstenite::{tungstenite::Message, WebSocketStream};
 use tracing::{debug, error, warn};
-use upload_response::{RequestControl, TailSlot, UploadResponseService};
+use upload_response::{
+    discover_ingress_origins, request_from_headers_slot, request_from_stream_headers,
+    RemoteIngressClient, RemoteRequestSlot, RequestControl, ResponseCacheWriter, TailSlot,
+    UploadResponseService,
+};
 use uuid::Uuid;
 use web_service::{BodyStream, HandlerResponse, HandlerResult, ServerError, WebSocketHandler};
 
@@ -67,18 +69,8 @@ trait JsonEventSink {
     }
 }
 
-enum ResponseCacheTarget {
-    Local(Arc<UploadResponseService>),
-    Remote {
-        client: RemoteIngressClient,
-        origin: String,
-    },
-}
-
 struct JsonLineResponseWriter {
-    target: ResponseCacheTarget,
-    stream_id: u64,
-    slot_bytes: usize,
+    writer: ResponseCacheWriter,
     started: bool,
     finished: bool,
 }
@@ -208,7 +200,7 @@ impl WorkerState {
         let options = ListenOptions::from_request(&req, &self.config);
         let sample_rate = options.sample_rate_hz.unwrap_or(ASR_SAMPLE_RATE);
         let channels = options.channels.max(1);
-        let mut pcm_stream = Linear16PcmStream::new(sample_rate, channels)
+        let mut pcm_stream = Linear16PcmStream::new(sample_rate, ASR_SAMPLE_RATE, channels)
             .map_err(|error| ServerError::Config(error.to_string()))?;
         let request_id = Uuid::new_v4().to_string();
         let (model_id, model_info) = default_model_info(&options.model);
@@ -609,7 +601,10 @@ impl WorkerState {
     }
 
     async fn run_remote_cache_worker(self: Arc<Self>) {
-        let client = match RemoteIngressClient::new(&self.config) {
+        let client = match RemoteIngressClient::new(
+            self.config.upload_response_config().slot_bytes(),
+            self.config.upload_response_insecure_tls,
+        ) {
             Ok(client) => client,
             Err(error) => {
                 error!(error = %error, "failed to build remote ingress client");
@@ -637,7 +632,12 @@ impl WorkerState {
             }
 
             if refresh_origins {
-                match discover_ingress_origins(&self.config).await {
+                match discover_ingress_origins(
+                    &self.config.upload_response_ingress_urls,
+                    self.config.upload_response_discovery_dns.as_deref(),
+                )
+                .await
+                {
                     Ok(next) => {
                         if next != origins {
                             debug!(origins = ?next, "updated ingress origins");
@@ -837,7 +837,7 @@ impl WorkerState {
                     client.clone(),
                     origin.to_string(),
                     stream_id,
-                    self.config.upload_response_config().slot_bytes(),
+                    client.slot_bytes(),
                 );
                 return self
                     .stream_remote_upload(client, origin, stream_id, request, &mut writer)
@@ -871,16 +871,7 @@ impl WorkerState {
         stream_id: u64,
     ) -> Result<Option<Request<()>>> {
         match service.tail_request(stream_id, 1).await {
-            Some(TailSlot::Headers(headers)) => Ok(Some(build_request_from_parts(
-                headers.method,
-                headers.path,
-                headers.authority,
-                headers
-                    .headers
-                    .into_iter()
-                    .map(|header| (header.name, header.value))
-                    .collect(),
-            )?)),
+            Some(TailSlot::Headers(headers)) => Ok(Some(request_from_stream_headers(headers)?)),
             Some(_) | None => Ok(None),
         }
     }
@@ -929,7 +920,8 @@ impl WorkerState {
                     Some(TailSlot::Headers(_)) => {}
                     Some(TailSlot::Body(chunk)) => {
                         received_bytes += chunk.len();
-                        let samples = pcm_f32le_bytes_to_vec(&chunk)?;
+                        let samples = decode_cached_f32le_chunk(&chunk)
+                            .map_err(anyhow::Error::msg)?;
                         if !state.speech_started_sent
                             && !samples.is_empty()
                             && rms_level(&samples) >= WS_SPEECH_RMS_THRESHOLD
@@ -1010,7 +1002,8 @@ impl WorkerState {
                     Some(RemoteRequestSlot::Headers(_)) => {}
                     Some(RemoteRequestSlot::Body(chunk)) => {
                         received_bytes += chunk.len();
-                        let samples = pcm_f32le_bytes_to_vec(&chunk)?;
+                        let samples = decode_cached_f32le_chunk(&chunk)
+                            .map_err(anyhow::Error::msg)?;
                         if !state.speech_started_sent
                             && !samples.is_empty()
                             && rms_level(&samples) >= WS_SPEECH_RMS_THRESHOLD
@@ -1085,16 +1078,7 @@ impl WorkerState {
             for slot_id in (last_slot + 1)..=current_last {
                 match service.tail_request(stream_id, slot_id).await {
                     Some(TailSlot::Headers(headers)) => {
-                        let built = build_request_from_parts(
-                            headers.method,
-                            headers.path,
-                            headers.authority,
-                            headers
-                                .headers
-                                .into_iter()
-                                .map(|header| (header.name, header.value))
-                                .collect(),
-                        )?;
+                        let built = request_from_stream_headers(headers)?;
                         reject_json_requests(&built)?;
                         request = Some(built);
                     }
@@ -1195,7 +1179,7 @@ impl WorkerState {
             for slot_id in (last_slot + 1)..=current_last {
                 match client.request_slot(origin, stream_id, slot_id).await? {
                     Some(RemoteRequestSlot::Headers(bytes)) => {
-                        let built = decode_request_headers_frame(&bytes)?;
+                        let built = request_from_headers_slot(&bytes)?;
                         reject_json_requests(&built)?;
                         request = Some(built);
                     }
@@ -1382,7 +1366,7 @@ impl WorkerState {
 
         while let Some(output) = decoder.recv() {
             let audio = output.map_err(|error| anyhow::anyhow!("decode failed: {error}"))?;
-            let samples = audio_to_mono_f32(&audio)?;
+            let samples = audio_to_mono_f32(&audio).map_err(anyhow::Error::msg)?;
             *total_samples += samples.len();
             chunker.push(&samples);
         }
@@ -1398,7 +1382,7 @@ impl WorkerState {
     ) -> Result<()> {
         while let Some(output) = decoder.try_recv() {
             let audio = output.map_err(|error| anyhow::anyhow!("decode failed: {error}"))?;
-            let samples = audio_to_mono_f32(&audio)?;
+            let samples = audio_to_mono_f32(&audio).map_err(anyhow::Error::msg)?;
             *total_samples += samples.len();
             chunker.push(&samples);
         }
@@ -1411,7 +1395,7 @@ impl WorkerState {
         chunker: &mut AudioChunker,
         total_samples: &mut usize,
     ) -> Result<()> {
-        let samples = pcm_f32le_bytes_to_vec(chunk)?;
+        let samples = decode_cached_f32le_chunk(chunk).map_err(anyhow::Error::msg)?;
         *total_samples += samples.len();
         chunker.push(&samples);
         Ok(())
@@ -1682,7 +1666,7 @@ impl JsonEventSink for JsonLineResponseWriter {
         self.ensure_started().await?;
         let mut payload = json.into_bytes();
         payload.push(b'\n');
-        self.append_body(Bytes::from(payload)).await
+        self.writer.send_body(Bytes::from(payload)).await
     }
 
     async fn finish(&mut self) -> Result<()> {
@@ -1690,47 +1674,16 @@ impl JsonEventSink for JsonLineResponseWriter {
             return Ok(());
         }
         self.ensure_started().await?;
-        match &self.target {
-            ResponseCacheTarget::Local(service) => service
-                .end_response(self.stream_id)
-                .await
-                .map_err(anyhow::Error::msg)?,
-            ResponseCacheTarget::Remote { client, origin } => {
-                client.end_response(origin, self.stream_id).await?;
-            }
-        }
+        self.writer.finish().await?;
         self.finished = true;
         Ok(())
     }
 }
 
-#[derive(Debug, Clone)]
-struct RemoteStreamInfo {
-    stream_id: u64,
-    request_last: usize,
-    response_owner: Option<String>,
-}
-
-#[derive(Debug)]
-enum RemoteRequestSlot {
-    Headers(Bytes),
-    Body(Bytes),
-    Control(RequestControl),
-    End,
-}
-
-#[derive(Clone)]
-struct RemoteIngressClient {
-    client: Client,
-    slot_bytes: usize,
-}
-
 impl JsonLineResponseWriter {
     fn local(service: Arc<UploadResponseService>, stream_id: u64, slot_bytes: usize) -> Self {
         Self {
-            target: ResponseCacheTarget::Local(service),
-            stream_id,
-            slot_bytes: slot_bytes.max(1),
+            writer: ResponseCacheWriter::local(service, stream_id, slot_bytes),
             started: false,
             finished: false,
         }
@@ -1743,9 +1696,7 @@ impl JsonLineResponseWriter {
         slot_bytes: usize,
     ) -> Self {
         Self {
-            target: ResponseCacheTarget::Remote { client, origin },
-            stream_id,
-            slot_bytes: slot_bytes.max(1),
+            writer: ResponseCacheWriter::remote(client, origin, stream_id, slot_bytes),
             started: false,
             finished: false,
         }
@@ -1763,371 +1714,8 @@ impl JsonLineResponseWriter {
         let response_head = builder
             .body(())
             .map_err(|error| anyhow::anyhow!("failed to build streaming response head: {error}"))?;
-        let headers =
-            StreamHeaders::from_response(self.stream_id, &response_head).map_err(|error| {
-                anyhow::anyhow!("failed to encode streaming response headers: {error}")
-            })?;
-
-        match &self.target {
-            ResponseCacheTarget::Local(service) => service
-                .write_response_headers(self.stream_id, headers)
-                .await
-                .map_err(anyhow::Error::msg)?,
-            ResponseCacheTarget::Remote { client, origin } => {
-                client
-                    .write_response_headers(origin, self.stream_id, headers)
-                    .await?;
-            }
-        }
-
+        self.writer.ensure_started(response_head).await?;
         self.started = true;
-        Ok(())
-    }
-
-    async fn append_body(&self, body: Bytes) -> Result<()> {
-        match &self.target {
-            ResponseCacheTarget::Local(service) => {
-                for chunk in body.chunks(self.slot_bytes) {
-                    if chunk.is_empty() {
-                        continue;
-                    }
-                    service
-                        .append_response_body(self.stream_id, Bytes::copy_from_slice(chunk))
-                        .await
-                        .map_err(anyhow::Error::msg)?;
-                }
-            }
-            ResponseCacheTarget::Remote { client, origin } => {
-                client
-                    .append_response_body(origin, self.stream_id, body)
-                    .await?;
-            }
-        }
-        Ok(())
-    }
-}
-
-impl RemoteIngressClient {
-    fn new(config: &AppConfig) -> Result<Self> {
-        let client = Client::builder()
-            .danger_accept_invalid_certs(config.upload_response_insecure_tls)
-            .http2_adaptive_window(true)
-            .build()
-            .map_err(|error| anyhow::anyhow!("failed to build reqwest client: {error}"))?;
-        Ok(Self {
-            client,
-            slot_bytes: config.upload_response_config().slot_bytes().max(1),
-        })
-    }
-
-    async fn list_streams(&self, origin: &str) -> Result<Vec<RemoteStreamInfo>> {
-        let response = self
-            .client
-            .get(format!("{origin}/_upload_response/streams"))
-            .send()
-            .await
-            .map_err(|error| anyhow::anyhow!("failed to list streams from {origin}: {error}"))?;
-        let status = response.status();
-        let body = response.text().await.map_err(|error| {
-            anyhow::anyhow!("failed to read stream list from {origin}: {error}")
-        })?;
-        anyhow::ensure!(
-            status.is_success(),
-            "unexpected stream list status {status} from {origin}: {body}"
-        );
-
-        let mut streams = Vec::new();
-        for (index, line) in body.lines().enumerate() {
-            if index == 0 || line.trim().is_empty() {
-                continue;
-            }
-            let fields: Vec<&str> = line.split('\t').collect();
-            if fields.len() < 6 {
-                continue;
-            }
-            streams.push(RemoteStreamInfo {
-                stream_id: fields[0]
-                    .parse()
-                    .map_err(|error| anyhow::anyhow!("invalid stream id in {origin}: {error}"))?,
-                request_last: fields[2].parse().map_err(|error| {
-                    anyhow::anyhow!("invalid request_last in {origin}: {error}")
-                })?,
-                response_owner: match fields[5] {
-                    "" | "-" => None,
-                    value => Some(value.to_string()),
-                },
-            });
-        }
-        Ok(streams)
-    }
-
-    async fn request_last(&self, origin: &str, stream_id: u64) -> Result<usize> {
-        let response = self
-            .client
-            .get(format!(
-                "{origin}/_upload_response/streams/{stream_id}/request/last"
-            ))
-            .send()
-            .await
-            .map_err(|error| {
-                anyhow::anyhow!("failed to read request_last for {stream_id}: {error}")
-            })?;
-        let status = response.status();
-        let body = response.text().await.map_err(|error| {
-            anyhow::anyhow!("failed to read request_last body for {stream_id}: {error}")
-        })?;
-        anyhow::ensure!(
-            status.is_success(),
-            "unexpected request_last status {status} for stream {stream_id}: {body}"
-        );
-        body.trim().parse().map_err(|error| {
-            anyhow::anyhow!("invalid request_last for stream {stream_id}: {error}")
-        })
-    }
-
-    async fn request_headers(&self, origin: &str, stream_id: u64) -> Result<Option<Request<()>>> {
-        match self.request_slot(origin, stream_id, 1).await? {
-            Some(RemoteRequestSlot::Headers(bytes)) => {
-                Ok(Some(decode_request_headers_frame(&bytes)?))
-            }
-            Some(_) | None => Ok(None),
-        }
-    }
-
-    async fn request_slot(
-        &self,
-        origin: &str,
-        stream_id: u64,
-        slot_id: usize,
-    ) -> Result<Option<RemoteRequestSlot>> {
-        let response = self
-            .client
-            .get(format!(
-                "{origin}/_upload_response/streams/{stream_id}/request/slots/{slot_id}"
-            ))
-            .send()
-            .await
-            .map_err(|error| {
-                anyhow::anyhow!("failed to fetch stream {stream_id} slot {slot_id}: {error}")
-            })?;
-        if response.status() == ReqwestStatusCode::NOT_FOUND {
-            return Ok(None);
-        }
-        let status = response.status();
-        let slot_type = response
-            .headers()
-            .get("x-upload-response-slot-type")
-            .and_then(|value| value.to_str().ok())
-            .unwrap_or("body")
-            .to_string();
-        let body = response.bytes().await.map_err(|error| {
-            anyhow::anyhow!("failed to read stream {stream_id} slot {slot_id}: {error}")
-        })?;
-        anyhow::ensure!(
-            status.is_success(),
-            "unexpected slot status {status} for stream {stream_id} slot {slot_id}"
-        );
-
-        Ok(Some(match slot_type.as_str() {
-            "headers" => RemoteRequestSlot::Headers(body),
-            "control-finalize" => RemoteRequestSlot::Control(RequestControl::Finalize),
-            "control-keepalive" => RemoteRequestSlot::Control(RequestControl::KeepAlive),
-            "end" => RemoteRequestSlot::End,
-            _ => RemoteRequestSlot::Body(body),
-        }))
-    }
-
-    async fn register_reader(&self, origin: &str, stream_id: u64, worker_id: &str) -> Result<()> {
-        let response = self
-            .client
-            .put(format!(
-                "{origin}/_upload_response/streams/{stream_id}/readers/{worker_id}"
-            ))
-            .send()
-            .await
-            .map_err(|error| {
-                anyhow::anyhow!("failed to register reader for {stream_id}: {error}")
-            })?;
-        anyhow::ensure!(
-            response.status().is_success() || response.status() == ReqwestStatusCode::NO_CONTENT,
-            "reader registration failed for stream {stream_id} with status {}",
-            response.status()
-        );
-        Ok(())
-    }
-
-    async fn unregister_reader(&self, origin: &str, stream_id: u64, worker_id: &str) -> Result<()> {
-        let response = self
-            .client
-            .delete(format!(
-                "{origin}/_upload_response/streams/{stream_id}/readers/{worker_id}"
-            ))
-            .send()
-            .await
-            .map_err(|error| {
-                anyhow::anyhow!("failed to unregister reader for {stream_id}: {error}")
-            })?;
-        anyhow::ensure!(
-            response.status().is_success()
-                || response.status() == ReqwestStatusCode::NO_CONTENT
-                || response.status() == ReqwestStatusCode::CONFLICT
-                || response.status() == ReqwestStatusCode::NOT_FOUND,
-            "reader unregister failed for stream {stream_id} with status {}",
-            response.status()
-        );
-        Ok(())
-    }
-
-    async fn try_claim_response(
-        &self,
-        origin: &str,
-        stream_id: u64,
-        worker_id: &str,
-    ) -> Result<bool> {
-        let response = self
-            .client
-            .put(format!(
-                "{origin}/_upload_response/streams/{stream_id}/response/claim/{worker_id}"
-            ))
-            .send()
-            .await
-            .map_err(|error| {
-                anyhow::anyhow!("failed to claim response for {stream_id}: {error}")
-            })?;
-        match response.status() {
-            ReqwestStatusCode::OK => Ok(true),
-            ReqwestStatusCode::CONFLICT
-            | ReqwestStatusCode::NO_CONTENT
-            | ReqwestStatusCode::NOT_FOUND => Ok(false),
-            status => {
-                let body = response.text().await.unwrap_or_default();
-                Err(anyhow::anyhow!(
-                    "unexpected claim status {status} for stream {stream_id}: {body}"
-                ))
-            }
-        }
-    }
-
-    async fn release_response(&self, origin: &str, stream_id: u64, worker_id: &str) -> Result<()> {
-        let response = self
-            .client
-            .delete(format!(
-                "{origin}/_upload_response/streams/{stream_id}/response/claim/{worker_id}"
-            ))
-            .send()
-            .await
-            .map_err(|error| {
-                anyhow::anyhow!("failed to release response for {stream_id}: {error}")
-            })?;
-        anyhow::ensure!(
-            response.status().is_success()
-                || response.status() == ReqwestStatusCode::CONFLICT
-                || response.status() == ReqwestStatusCode::NOT_FOUND,
-            "release response failed for stream {stream_id} with status {}",
-            response.status()
-        );
-        Ok(())
-    }
-
-    async fn write_handler_response(
-        &self,
-        origin: &str,
-        stream_id: u64,
-        response: HandlerResponse,
-    ) -> Result<()> {
-        let mut builder = http::Response::builder().status(response.status);
-        if let Some(content_type) = &response.content_type {
-            builder = builder.header(http::header::CONTENT_TYPE, content_type);
-        }
-        if let Some(etag) = response.etag {
-            builder = builder.header(http::header::ETAG, etag.to_string());
-        }
-        for (name, value) in &response.headers {
-            builder = builder.header(name, value);
-        }
-
-        let response_head = builder
-            .body(())
-            .map_err(|error| anyhow::anyhow!("failed to build response head: {error}"))?;
-        let headers = StreamHeaders::from_response(stream_id, &response_head)
-            .map_err(|error| anyhow::anyhow!("failed to encode response headers: {error}"))?;
-        self.write_response_headers(origin, stream_id, headers)
-            .await?;
-
-        if let Some(body) = response.body {
-            self.append_response_body(origin, stream_id, body).await?;
-        }
-
-        self.end_response(origin, stream_id).await?;
-
-        Ok(())
-    }
-
-    async fn write_response_headers(
-        &self,
-        origin: &str,
-        stream_id: u64,
-        headers: StreamHeaders,
-    ) -> Result<()> {
-        let payload = encode_frame(&StreamFrame::Headers(headers));
-        self.expect_ok(
-            self.client
-                .put(format!(
-                    "{origin}/_upload_response/streams/{stream_id}/response/headers"
-                ))
-                .body(payload)
-                .send()
-                .await,
-            format!("write response headers for stream {stream_id}"),
-        )
-        .await
-    }
-
-    async fn append_response_body(&self, origin: &str, stream_id: u64, body: Bytes) -> Result<()> {
-        for chunk in body.chunks(self.slot_bytes) {
-            if chunk.is_empty() {
-                continue;
-            }
-            self.expect_ok(
-                self.client
-                    .put(format!(
-                        "{origin}/_upload_response/streams/{stream_id}/response/body"
-                    ))
-                    .body(chunk.to_vec())
-                    .send()
-                    .await,
-                format!("write response body for stream {stream_id}"),
-            )
-            .await?;
-        }
-        Ok(())
-    }
-
-    async fn end_response(&self, origin: &str, stream_id: u64) -> Result<()> {
-        self.expect_ok(
-            self.client
-                .put(format!(
-                    "{origin}/_upload_response/streams/{stream_id}/response/end"
-                ))
-                .send()
-                .await,
-            format!("write response end for stream {stream_id}"),
-        )
-        .await
-    }
-
-    async fn expect_ok(
-        &self,
-        response: std::result::Result<reqwest::Response, reqwest::Error>,
-        context: String,
-    ) -> Result<()> {
-        let response = response.map_err(|error| anyhow::anyhow!("{context}: {error}"))?;
-        let status = response.status();
-        let body = response.text().await.unwrap_or_default();
-        anyhow::ensure!(
-            status.is_success(),
-            "{context}: unexpected status {status}: {body}"
-        );
         Ok(())
     }
 }
@@ -2138,95 +1726,6 @@ fn is_streaming_request(req: &Request<()>) -> bool {
         .and_then(|value| value.to_str().ok())
         .map(|value| value.eq_ignore_ascii_case(INTERNAL_STREAMING_MODE_JSONL))
         .unwrap_or(false)
-}
-
-async fn discover_ingress_origins(config: &AppConfig) -> Result<Vec<String>> {
-    let mut origins = BTreeSet::new();
-
-    for origin in &config.upload_response_ingress_urls {
-        let trimmed = origin.trim().trim_end_matches('/');
-        if !trimmed.is_empty() {
-            origins.insert(trimmed.to_string());
-        }
-    }
-
-    if let Some(discovery_dns) = &config.upload_response_discovery_dns {
-        let discovery_dns = discovery_dns.trim();
-        if !discovery_dns.is_empty() {
-            for socket in lookup_host(discovery_dns)
-                .await
-                .map_err(|error| anyhow::anyhow!("failed to resolve {discovery_dns}: {error}"))?
-            {
-                origins.insert(format!("https://{}", socket));
-            }
-        }
-    }
-
-    Ok(origins.into_iter().collect())
-}
-
-fn pcm_f32le_bytes_to_vec(chunk: &[u8]) -> Result<Vec<f32>> {
-    anyhow::ensure!(
-        chunk.len() % std::mem::size_of::<f32>() == 0,
-        "invalid cached PCM chunk length {}; expected multiple of 4",
-        chunk.len()
-    );
-
-    let mut samples = Vec::with_capacity(chunk.len() / std::mem::size_of::<f32>());
-    for bytes in chunk.chunks_exact(std::mem::size_of::<f32>()) {
-        samples.push(f32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]));
-    }
-    Ok(samples)
-}
-
-fn decode_request_headers_frame(bytes: &[u8]) -> Result<Request<()>> {
-    let frame = decode_frame(bytes)
-        .map_err(|error| anyhow::anyhow!("failed to decode cached request headers: {error}"))?;
-    match frame {
-        StreamFrame::Headers(StreamHeaders::Request(headers)) => build_request_from_parts(
-            headers.method,
-            headers.path,
-            headers.authority,
-            headers
-                .headers
-                .into_iter()
-                .map(|header| (header.name, header.value))
-                .collect(),
-        ),
-        _ => anyhow::bail!("unexpected cached request frame; expected request headers"),
-    }
-}
-
-fn audio_to_mono_f32(audio: &AudioData) -> Result<Vec<f32>> {
-    let channels: Vec<Vec<f32>> =
-        match deserialize_audio(audio.data(), audio.bits_per_sample(), audio.channel_count())
-            .map_err(|error| anyhow::anyhow!("failed to deserialize PCM: {error}"))?
-        {
-            PcmData::I16(channels) => channels.into_iter().map(vec_i16_to_f32).collect(),
-            PcmData::I32(channels) => channels.into_iter().map(vec_i32_to_f32).collect(),
-            PcmData::F32(channels) => channels,
-        };
-
-    if channels.is_empty() {
-        return Ok(Vec::new());
-    }
-    if channels.len() == 1 {
-        return Ok(channels.into_iter().next().unwrap_or_default());
-    }
-
-    let len = channels[0].len();
-    let mut mono = vec![0.0f32; len];
-    for channel in &channels {
-        for (index, sample) in channel.iter().enumerate().take(len) {
-            mono[index] += *sample;
-        }
-    }
-
-    let scale = 1.0 / channels.len() as f32;
-    for sample in &mut mono {
-        *sample *= scale;
-    }
-    Ok(mono)
 }
 
 fn reject_json_requests(req: &Request<()>) -> Result<()> {
@@ -2284,37 +1783,4 @@ fn classify_error(error: &anyhow::Error) -> StatusCode {
     } else {
         StatusCode::INTERNAL_SERVER_ERROR
     }
-}
-
-fn build_request_from_parts(
-    method: Vec<u8>,
-    path: Vec<u8>,
-    authority: Option<Vec<u8>>,
-    headers: Vec<(Vec<u8>, Vec<u8>)>,
-) -> Result<Request<()>> {
-    let method = String::from_utf8(method)
-        .map_err(|error| anyhow::anyhow!("invalid request method bytes: {error}"))?;
-    let uri = String::from_utf8(path)
-        .map_err(|error| anyhow::anyhow!("invalid request path bytes: {error}"))?;
-
-    let mut builder = Request::builder().method(method.as_str()).uri(uri.as_str());
-    if let Some(authority) = authority {
-        builder = builder.header(
-            http::header::HOST,
-            HeaderValue::from_bytes(&authority)
-                .map_err(|error| anyhow::anyhow!("invalid authority header: {error}"))?,
-        );
-    }
-
-    for (name_bytes, value_bytes) in headers {
-        let name = HeaderName::from_bytes(&name_bytes)
-            .map_err(|error| anyhow::anyhow!("invalid header name: {error}"))?;
-        let value = HeaderValue::from_bytes(&value_bytes)
-            .map_err(|error| anyhow::anyhow!("invalid header value: {error}"))?;
-        builder = builder.header(name, value);
-    }
-
-    builder
-        .body(())
-        .map_err(|error| anyhow::anyhow!("failed to build request: {error}"))
 }

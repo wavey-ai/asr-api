@@ -145,6 +145,7 @@ dependencies = [
  "asr-onnx",
  "asr-torch",
  "async-trait",
+ "av-api",
  "bytes",
  "chrono",
  "clap 4.6.0",
@@ -240,6 +241,19 @@ name = "autocfg"
 version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c08606f8c3cbf4ce6ec8e28fb0014a2c086708fe954eaa885384a6165172e7e8"
+
+[[package]]
+name = "av-api"
+version = "0.1.0"
+source = "git+https://github.com/wavey-ai/av-api.git?rev=e22fe122a9e25573d7e7d109b0f751eb96ba8d53#e22fe122a9e25573d7e7d109b0f751eb96ba8d53"
+dependencies = [
+ "anyhow",
+ "bytes",
+ "http",
+ "soundkit",
+ "soundkit-decoder",
+ "upload-response",
+]
 
 [[package]]
 name = "av-bitstream"
@@ -2996,7 +3010,7 @@ dependencies = [
 [[package]]
 name = "soundkit"
 version = "0.12.2"
-source = "git+https://github.com/wavey-ai/soundkit.git?rev=58711bc830fc00098bf3af7d57d0f8fc42da1e05#58711bc830fc00098bf3af7d57d0f8fc42da1e05"
+source = "git+https://github.com/wavey-ai/soundkit.git?rev=343e02218d9c7beda86807f178f5388e3f8d4887#343e02218d9c7beda86807f178f5388e3f8d4887"
 dependencies = [
  "byteorder",
  "bytes",
@@ -3008,7 +3022,7 @@ dependencies = [
 [[package]]
 name = "soundkit-aac"
 version = "0.1.0"
-source = "git+https://github.com/wavey-ai/soundkit.git?rev=58711bc830fc00098bf3af7d57d0f8fc42da1e05#58711bc830fc00098bf3af7d57d0f8fc42da1e05"
+source = "git+https://github.com/wavey-ai/soundkit.git?rev=343e02218d9c7beda86807f178f5388e3f8d4887#343e02218d9c7beda86807f178f5388e3f8d4887"
 dependencies = [
  "access-unit 0.1.2 (git+https://github.com/wavey-ai/access-unit.git)",
  "fdk-aac",
@@ -3020,7 +3034,7 @@ dependencies = [
 [[package]]
 name = "soundkit-decoder"
 version = "0.1.0"
-source = "git+https://github.com/wavey-ai/soundkit.git?rev=58711bc830fc00098bf3af7d57d0f8fc42da1e05#58711bc830fc00098bf3af7d57d0f8fc42da1e05"
+source = "git+https://github.com/wavey-ai/soundkit.git?rev=343e02218d9c7beda86807f178f5388e3f8d4887#343e02218d9c7beda86807f178f5388e3f8d4887"
 dependencies = [
  "access-unit 0.1.2 (registry+https://github.com/rust-lang/crates.io-index)",
  "bytes",
@@ -3038,7 +3052,7 @@ dependencies = [
 [[package]]
 name = "soundkit-flac"
 version = "0.1.0"
-source = "git+https://github.com/wavey-ai/soundkit.git?rev=58711bc830fc00098bf3af7d57d0f8fc42da1e05#58711bc830fc00098bf3af7d57d0f8fc42da1e05"
+source = "git+https://github.com/wavey-ai/soundkit.git?rev=343e02218d9c7beda86807f178f5388e3f8d4887#343e02218d9c7beda86807f178f5388e3f8d4887"
 dependencies = [
  "access-unit 0.1.2 (registry+https://github.com/rust-lang/crates.io-index)",
  "claxon",
@@ -3051,7 +3065,7 @@ dependencies = [
 [[package]]
 name = "soundkit-mp3"
 version = "0.1.0"
-source = "git+https://github.com/wavey-ai/soundkit.git?rev=58711bc830fc00098bf3af7d57d0f8fc42da1e05#58711bc830fc00098bf3af7d57d0f8fc42da1e05"
+source = "git+https://github.com/wavey-ai/soundkit.git?rev=343e02218d9c7beda86807f178f5388e3f8d4887#343e02218d9c7beda86807f178f5388e3f8d4887"
 dependencies = [
  "nanomp3",
  "soundkit",
@@ -3061,7 +3075,7 @@ dependencies = [
 [[package]]
 name = "soundkit-ogg-opus"
 version = "0.0.1"
-source = "git+https://github.com/wavey-ai/soundkit.git?rev=58711bc830fc00098bf3af7d57d0f8fc42da1e05#58711bc830fc00098bf3af7d57d0f8fc42da1e05"
+source = "git+https://github.com/wavey-ai/soundkit.git?rev=343e02218d9c7beda86807f178f5388e3f8d4887#343e02218d9c7beda86807f178f5388e3f8d4887"
 dependencies = [
  "frame-header",
  "memchr",
@@ -3073,7 +3087,7 @@ dependencies = [
 [[package]]
 name = "soundkit-opus"
 version = "0.0.1"
-source = "git+https://github.com/wavey-ai/soundkit.git?rev=58711bc830fc00098bf3af7d57d0f8fc42da1e05#58711bc830fc00098bf3af7d57d0f8fc42da1e05"
+source = "git+https://github.com/wavey-ai/soundkit.git?rev=343e02218d9c7beda86807f178f5388e3f8d4887#343e02218d9c7beda86807f178f5388e3f8d4887"
 dependencies = [
  "frame-header",
  "libopus",
@@ -3084,7 +3098,7 @@ dependencies = [
 [[package]]
 name = "soundkit-webm"
 version = "0.0.1"
-source = "git+https://github.com/wavey-ai/soundkit.git?rev=58711bc830fc00098bf3af7d57d0f8fc42da1e05#58711bc830fc00098bf3af7d57d0f8fc42da1e05"
+source = "git+https://github.com/wavey-ai/soundkit.git?rev=343e02218d9c7beda86807f178f5388e3f8d4887#343e02218d9c7beda86807f178f5388e3f8d4887"
 dependencies = [
  "frame-header",
  "soundkit",
@@ -3732,8 +3746,9 @@ checksum = "6d49784317cd0d1ee7ec5c716dd598ec5b4483ea832a2dced265471cc0f690ae"
 [[package]]
 name = "upload-response"
 version = "0.1.0"
-source = "git+https://github.com/wavey-ai/web-services.git?rev=6c819b5c8287a074ec991b970a9023ff4e06b41f#6c819b5c8287a074ec991b970a9023ff4e06b41f"
+source = "git+https://github.com/wavey-ai/web-services.git?rev=065ccab2d5f4a61ccc0bf7b3e3d32da2759828f4#065ccab2d5f4a61ccc0bf7b3e3d32da2759828f4"
 dependencies = [
+ "anyhow",
  "async-trait",
  "bytes",
  "futures-util",
@@ -3742,6 +3757,7 @@ dependencies = [
  "hyper",
  "hyper-util",
  "playlists",
+ "reqwest",
  "rustls 0.23.37",
  "rustls-pemfile",
  "tokio",
@@ -3984,7 +4000,7 @@ dependencies = [
 [[package]]
 name = "web-service"
 version = "0.1.0"
-source = "git+https://github.com/wavey-ai/web-services.git?rev=6c819b5c8287a074ec991b970a9023ff4e06b41f#6c819b5c8287a074ec991b970a9023ff4e06b41f"
+source = "git+https://github.com/wavey-ai/web-services.git?rev=065ccab2d5f4a61ccc0bf7b3e3d32da2759828f4#065ccab2d5f4a61ccc0bf7b3e3d32da2759828f4"
 dependencies = [
  "anyhow",
  "async-trait",

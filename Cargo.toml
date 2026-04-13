@@ -10,6 +10,7 @@ gpu-backend = ["dep:asr-onnx", "dep:asr-torch"]
 [dependencies]
 anyhow = "1.0"
 async-trait = "0.1"
+av-api = { git = "https://github.com/wavey-ai/av-api.git", rev = "e22fe122a9e25573d7e7d109b0f751eb96ba8d53" }
 asr-onnx = { git = "https://github.com/wavey-ai/asr-onnx.git", rev = "cb6bfdaf983a7937cfffd7c2dafe2af28c804d46", optional = true }
 asr-torch = { git = "https://github.com/wavey-ai/asr-torch.git", rev = "f99c843b694229f34160217db9abea3d39854a64", optional = true }
 bytes = "1"
@@ -27,13 +28,13 @@ reqwest = { version = "0.12", features = ["rustls-tls", "http2"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 sha2 = "0.10"
-soundkit = { git = "https://github.com/wavey-ai/soundkit.git", rev = "58711bc830fc00098bf3af7d57d0f8fc42da1e05", package = "soundkit" }
-soundkit-decoder = { git = "https://github.com/wavey-ai/soundkit.git", rev = "58711bc830fc00098bf3af7d57d0f8fc42da1e05", package = "soundkit-decoder" }
+soundkit = { git = "https://github.com/wavey-ai/soundkit.git", rev = "343e02218d9c7beda86807f178f5388e3f8d4887", package = "soundkit" }
+soundkit-decoder = { git = "https://github.com/wavey-ai/soundkit.git", rev = "343e02218d9c7beda86807f178f5388e3f8d4887", package = "soundkit-decoder" }
 tokio = { version = "1.45", features = ["full"] }
 tokio-tungstenite = { version = "0.27", features = ["rustls-tls-webpki-roots"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
-upload-response = { git = "https://github.com/wavey-ai/web-services.git", package = "upload-response", rev = "6c819b5c8287a074ec991b970a9023ff4e06b41f" }
+upload-response = { git = "https://github.com/wavey-ai/web-services.git", package = "upload-response", rev = "065ccab2d5f4a61ccc0bf7b3e3d32da2759828f4" }
 url = "2.5"
 uuid = { version = "1", features = ["v4"] }
-web-service = { git = "https://github.com/wavey-ai/web-services.git", package = "web-service", rev = "6c819b5c8287a074ec991b970a9023ff4e06b41f" }
+web-service = { git = "https://github.com/wavey-ai/web-services.git", package = "web-service", rev = "065ccab2d5f4a61ccc0bf7b3e3d32da2759828f4" }

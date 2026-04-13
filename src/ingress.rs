@@ -1,25 +1,25 @@
 use crate::config::{AppConfig, ASR_SAMPLE_RATE};
 use crate::deepgram::ListenOptions;
-use crate::pcm::Linear16PcmStream;
+use av_api::cached_audio::CachedMonoPcmWriter;
+use av_api::linear16::Linear16PcmStream;
 use crate::protocol::{INTERNAL_STREAMING_MODE_HEADER, INTERNAL_STREAMING_MODE_JSONL};
 use anyhow::Result;
 use async_trait::async_trait;
 use bytes::Bytes;
 use futures_util::{stream::SplitSink, SinkExt, StreamExt};
-use http::{header::CONTENT_TYPE, HeaderName, HeaderValue, Request, Response, StatusCode};
-use http_pack::stream::{StreamHeaders, StreamResponseHeaders};
+use http::{header::CONTENT_TYPE, HeaderName, HeaderValue, Request, StatusCode};
 use hyper::upgrade::Upgraded;
 use hyper_util::rt::TokioIo;
 use serde::Deserialize;
 use serde_json::json;
-use soundkit::audio_pipeline::{deserialize_audio, vec_i16_to_f32, vec_i32_to_f32};
-use soundkit::audio_types::{AudioData, PcmData};
 use soundkit_decoder::{DecodeOptions, DecodePipeline, DecodePipelineHandle};
 use std::sync::Arc;
-use tokio::sync::oneshot;
 use tokio::time::{interval, timeout, Duration};
 use tokio_tungstenite::{tungstenite::Message, WebSocketStream};
-use upload_response::{RequestControl, ResponseResult, TailSlot, UploadResponseService};
+use upload_response::{
+    response_content_type, CachedIngress, IngressProxyConfig, RequestControl, TailSlot,
+    UploadResponseService,
+};
 use web_service::{
     BodyStream, HandlerResponse, HandlerResult, ServerError, StreamWriter, WebSocketHandler,
 };
@@ -27,6 +27,7 @@ use web_service::{
 #[derive(Clone)]
 pub struct ListenIngress {
     config: AppConfig,
+    cached: CachedIngress,
     service: Arc<UploadResponseService>,
 }
 
@@ -43,7 +44,18 @@ struct WsClientEvent {
 
 impl ListenIngress {
     pub fn new(config: AppConfig, service: Arc<UploadResponseService>) -> Self {
-        Self { config, service }
+        let cached = CachedIngress::new(
+            service.clone(),
+            IngressProxyConfig {
+                response_timeout_ms: config.upload_response_timeout_ms,
+                watch_poll_ms: config.upload_response_watch_poll_ms,
+            },
+        );
+        Self {
+            config,
+            cached,
+            service,
+        }
     }
 
     pub async fn handle_listen(&self, req: Request<()>, body: BodyStream) -> HandlerResponse {
@@ -62,32 +74,24 @@ impl ListenIngress {
         reject_json_requests(&req).map_err(anyhow_to_server_error)?;
         let options = ListenOptions::from_request(&req, &self.config);
 
-        let stream = self
-            .service
-            .open_stream()
+        let guard = self
+            .cached
+            .open_streaming_request()
             .await
-            .map_err(ServerError::Config)?;
-        let stream_id = stream.stream_id();
-
-        // Keep the response watcher quiet for streaming responses that are proxied directly.
-        let rx = self.service.register_response(stream_id).await;
-        drop(rx);
+            .map_err(anyhow_to_server_error)?;
+        let stream_id = guard.stream_id();
 
         self.write_cached_request_headers(stream_id, &req, true)
             .await
             .map_err(anyhow_to_server_error)?;
 
         let ingress = self.clone();
-        let service = Arc::clone(&self.service);
         let body_task = tokio::spawn(async move {
             let result: Result<()> = async {
                 ingress
                     .transcode_request_body(stream_id, body, &options)
                     .await?;
-                service
-                    .end_request(stream_id)
-                    .await
-                    .map_err(anyhow::Error::msg)?;
+                ingress.cached.end_request(stream_id).await?;
                 Ok(())
             }
             .await;
@@ -99,11 +103,9 @@ impl ListenIngress {
             result
         });
 
-        let proxy_result = self
-            .proxy_streaming_response(stream_id, stream_writer)
-            .await;
+        let proxy_result = self.cached.proxy_streaming_response(stream_id, stream_writer).await;
         let _ = body_task.await;
-        stream.close().await;
+        guard.close().await;
         proxy_result
     }
 
@@ -115,18 +117,15 @@ impl ListenIngress {
         let options = ListenOptions::from_request(&req, &self.config);
         let sample_rate = options.sample_rate_hz.unwrap_or(ASR_SAMPLE_RATE);
         let channels = options.channels.max(1);
-        let mut pcm_stream = Linear16PcmStream::new(sample_rate, channels)
+        let mut pcm_stream = Linear16PcmStream::new(sample_rate, ASR_SAMPLE_RATE, channels)
             .map_err(|error| ServerError::Config(error.to_string()))?;
 
         let upload_stream = self
-            .service
-            .open_stream()
+            .cached
+            .open_streaming_request()
             .await
-            .map_err(ServerError::Config)?;
+            .map_err(anyhow_to_server_error)?;
         let stream_id = upload_stream.stream_id();
-
-        let rx = self.service.register_response(stream_id).await;
-        drop(rx);
 
         self.write_cached_request_headers(stream_id, &req, true)
             .await
@@ -215,13 +214,8 @@ impl ListenIngress {
         reject_json_requests(&req)?;
         let options = ListenOptions::from_request(&req, &self.config);
 
-        let stream = self
-            .service
-            .open_stream()
-            .await
-            .map_err(anyhow::Error::msg)?;
-        let stream_id = stream.stream_id();
-        let rx = self.service.register_response(stream_id).await;
+        let mut guard = self.cached.open_buffered_request().await?;
+        let stream_id = guard.stream_id();
 
         let result = async {
             self.write_cached_request_headers(stream_id, &req, false)
@@ -229,16 +223,16 @@ impl ListenIngress {
 
             self.transcode_request_body(stream_id, body, &options)
                 .await?;
-            self.service
-                .end_request(stream_id)
-                .await
-                .map_err(anyhow::Error::msg)?;
+            self.cached.end_request(stream_id).await?;
 
-            self.await_response(stream_id, rx).await
+            let rx = guard
+                .take_response_receiver()
+                .ok_or_else(|| anyhow::anyhow!("response receiver missing for buffered request"))?;
+            self.cached.await_response(stream_id, rx).await
         }
         .await;
 
-        stream.close().await;
+        guard.close().await;
         result
     }
 
@@ -248,13 +242,17 @@ impl ListenIngress {
         req: &Request<()>,
         streaming: bool,
     ) -> Result<()> {
-        let request = clone_request_head(req, streaming)?;
-        let headers = StreamHeaders::from_request(stream_id, &request)
-            .map_err(|error| anyhow::anyhow!("failed to encode request headers: {error}"))?;
-        self.service
-            .write_request_headers(stream_id, headers)
+        self.cached
+            .write_request_headers_with(stream_id, req, |headers| {
+                if streaming {
+                    headers.insert(
+                        HeaderName::from_static(INTERNAL_STREAMING_MODE_HEADER),
+                        HeaderValue::from_static(INTERNAL_STREAMING_MODE_JSONL),
+                    );
+                }
+                Ok(())
+            })
             .await
-            .map_err(anyhow::Error::msg)
     }
 
     async fn transcode_request_body(
@@ -305,7 +303,7 @@ impl ListenIngress {
             .ok_or_else(|| anyhow::anyhow!("sample_rate is required for encoding=linear16"))?;
         let channels = options.channels.max(1);
         let mut received_bytes = 0usize;
-        let mut pcm = Linear16PcmStream::new(sample_rate, channels)
+        let mut pcm = Linear16PcmStream::new(sample_rate, ASR_SAMPLE_RATE, channels)
             .map_err(|error| anyhow::anyhow!("{error}"))?;
 
         while let Some(next) = body.next().await {
@@ -388,124 +386,30 @@ impl ListenIngress {
         Ok(())
     }
 
-    async fn append_audio(&self, stream_id: u64, audio: &AudioData) -> Result<()> {
-        let samples = audio_to_mono_f32(audio)?;
-        self.append_samples(stream_id, &samples).await
+    fn cached_pcm_writer(&self, stream_id: u64) -> CachedMonoPcmWriter {
+        CachedMonoPcmWriter::new(
+            self.service.clone(),
+            stream_id,
+            self.config.upload_response_config().slot_bytes().max(1),
+        )
+    }
+
+    async fn append_audio(
+        &self,
+        stream_id: u64,
+        audio: &soundkit::audio_types::AudioData,
+    ) -> Result<()> {
+        self.cached_pcm_writer(stream_id)
+            .append_audio(audio)
+            .await
+            .map_err(anyhow::Error::msg)
     }
 
     async fn append_samples(&self, stream_id: u64, samples: &[f32]) -> Result<()> {
-        if samples.is_empty() {
-            return Ok(());
-        }
-
-        let mut pcm_bytes = Vec::with_capacity(samples.len() * std::mem::size_of::<f32>());
-        for sample in samples {
-            pcm_bytes.extend_from_slice(&sample.to_le_bytes());
-        }
-
-        let slot_bytes = self.config.upload_response_config().slot_bytes().max(1);
-        for chunk in pcm_bytes.chunks(slot_bytes) {
-            self.service
-                .append_request_body(stream_id, Bytes::copy_from_slice(chunk))
-                .await
-                .map_err(anyhow::Error::msg)?;
-        }
-
-        Ok(())
-    }
-
-    async fn await_response(
-        &self,
-        stream_id: u64,
-        rx: oneshot::Receiver<ResponseResult>,
-    ) -> Result<HandlerResponse> {
-        let timeout_duration = Duration::from_millis(self.config.upload_response_timeout_ms);
-        match timeout(timeout_duration, rx).await {
-            Ok(Ok(Ok(cached))) => {
-                let mut content_type = None;
-                let mut headers = Vec::new();
-                for (name, value) in cached.headers {
-                    if name.eq_ignore_ascii_case("content-type") {
-                        content_type = Some(value);
-                    } else {
-                        headers.push((name, value));
-                    }
-                }
-
-                Ok(HandlerResponse {
-                    status: cached.status,
-                    body: Some(cached.body),
-                    content_type,
-                    headers,
-                    etag: None,
-                })
-            }
-            Ok(Ok(Err(error))) => {
-                self.service.drop_response_channel(stream_id).await;
-                Err(anyhow::anyhow!(error))
-            }
-            Ok(Err(_)) => {
-                self.service.drop_response_channel(stream_id).await;
-                Err(anyhow::anyhow!("response channel closed"))
-            }
-            Err(_) => {
-                self.service.drop_response_channel(stream_id).await;
-                Err(anyhow::anyhow!("response timeout"))
-            }
-        }
-    }
-
-    async fn proxy_streaming_response(
-        &self,
-        stream_id: u64,
-        mut stream_writer: Box<dyn StreamWriter>,
-    ) -> HandlerResult<()> {
-        let timeout_duration = Duration::from_millis(self.config.upload_response_timeout_ms);
-        timeout(timeout_duration, async {
-            let mut poll = interval(Duration::from_millis(
-                self.config.upload_response_watch_poll_ms.max(1),
-            ));
-            let mut last_slot = 0usize;
-            let mut headers_sent = false;
-
-            loop {
-                poll.tick().await;
-
-                if !headers_sent {
-                    if let Some(headers) = self.service.get_response_headers(stream_id).await {
-                        stream_writer
-                            .send_response(build_streaming_response_head(&headers)?)
-                            .await?;
-                        headers_sent = true;
-                        last_slot = 1;
-                    } else {
-                        continue;
-                    }
-                }
-
-                let current_last = self.service.response_last(stream_id).unwrap_or(0);
-                if current_last <= last_slot {
-                    continue;
-                }
-
-                for slot_id in (last_slot + 1)..=current_last {
-                    match self.service.tail_response(stream_id, slot_id).await {
-                        Some(TailSlot::Body(bytes)) => {
-                            stream_writer.send_data(bytes).await?;
-                        }
-                        Some(TailSlot::End) => {
-                            stream_writer.finish().await?;
-                            return Ok(());
-                        }
-                        _ => {}
-                    }
-                }
-
-                last_slot = current_last;
-            }
-        })
-        .await
-        .map_err(|_| ServerError::Config("response timeout".into()))?
+        self.cached_pcm_writer(stream_id)
+            .append_samples(samples)
+            .await
+            .map_err(anyhow::Error::msg)
     }
 
     async fn proxy_websocket_response(
@@ -591,10 +495,11 @@ impl ListenIngress {
     }
 
     async fn write_stream_error_response(&self, stream_id: u64, error: &anyhow::Error) {
-        let response = error_response(classify_error(error), error.to_string());
-        let _ = self
-            .service
-            .write_handler_response(stream_id, response)
+        self.cached
+            .write_handler_response(
+                stream_id,
+                error_response(classify_error(error), error.to_string()),
+            )
             .await;
     }
 
@@ -628,56 +533,6 @@ impl WebSocketHandler for ListenIngressWebSocketHandler {
     }
 }
 
-fn clone_request_head(req: &Request<()>, streaming: bool) -> Result<Request<()>> {
-    let mut builder = Request::builder()
-        .method(req.method().clone())
-        .uri(req.uri().clone())
-        .version(req.version());
-
-    let headers = builder
-        .headers_mut()
-        .ok_or_else(|| anyhow::anyhow!("failed to construct request headers"))?;
-
-    for (name, value) in req.headers() {
-        headers.insert(name, value.clone());
-    }
-
-    if streaming {
-        headers.insert(
-            HeaderName::from_static(INTERNAL_STREAMING_MODE_HEADER),
-            HeaderValue::from_static(INTERNAL_STREAMING_MODE_JSONL),
-        );
-    }
-
-    builder
-        .body(())
-        .map_err(|error| anyhow::anyhow!("failed to clone request head: {error}"))
-}
-
-fn build_streaming_response_head(headers: &StreamResponseHeaders) -> HandlerResult<Response<()>> {
-    let mut builder = Response::builder().status(headers.status);
-    for header in &headers.headers {
-        let name = HeaderName::from_bytes(&header.name).map_err(|error| {
-            ServerError::Config(format!("invalid response header name: {error}"))
-        })?;
-        let value = HeaderValue::from_bytes(&header.value).map_err(|error| {
-            ServerError::Config(format!("invalid response header value for {name}: {error}"))
-        })?;
-        builder = builder.header(name, value);
-    }
-    builder
-        .body(())
-        .map_err(|error| ServerError::Config(format!("failed to build response head: {error}")))
-}
-
-fn response_content_type(headers: &StreamResponseHeaders) -> Option<String> {
-    headers.headers.iter().find_map(|header| {
-        let name = String::from_utf8_lossy(&header.name);
-        name.eq_ignore_ascii_case("content-type")
-            .then(|| String::from_utf8_lossy(&header.value).to_ascii_lowercase())
-    })
-}
-
 async fn send_ws_body_chunk(
     sink: &mut SplitSink<WebSocketStream<TokioIo<Upgraded>>, Message>,
     bytes: Bytes,
@@ -696,38 +551,6 @@ async fn send_ws_body_chunk(
 fn trim_newline(bytes: &[u8]) -> &[u8] {
     let bytes = bytes.strip_suffix(b"\n").unwrap_or(bytes);
     bytes.strip_suffix(b"\r").unwrap_or(bytes)
-}
-
-fn audio_to_mono_f32(audio: &AudioData) -> Result<Vec<f32>> {
-    let channels: Vec<Vec<f32>> =
-        match deserialize_audio(audio.data(), audio.bits_per_sample(), audio.channel_count())
-            .map_err(|error| anyhow::anyhow!("failed to deserialize PCM: {error}"))?
-        {
-            PcmData::I16(channels) => channels.into_iter().map(vec_i16_to_f32).collect(),
-            PcmData::I32(channels) => channels.into_iter().map(vec_i32_to_f32).collect(),
-            PcmData::F32(channels) => channels,
-        };
-
-    if channels.is_empty() {
-        return Ok(Vec::new());
-    }
-    if channels.len() == 1 {
-        return Ok(channels.into_iter().next().unwrap_or_default());
-    }
-
-    let len = channels[0].len();
-    let mut mono = vec![0.0f32; len];
-    for channel in &channels {
-        for (index, sample) in channel.iter().enumerate().take(len) {
-            mono[index] += *sample;
-        }
-    }
-
-    let scale = 1.0 / channels.len() as f32;
-    for sample in &mut mono {
-        *sample *= scale;
-    }
-    Ok(mono)
 }
 
 fn reject_json_requests(req: &Request<()>) -> Result<()> {
