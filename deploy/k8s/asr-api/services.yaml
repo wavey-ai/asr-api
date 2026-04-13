@@ -3,6 +3,8 @@ kind: Service
 metadata:
   name: asr-api-ingress
   namespace: asr-api
+  annotations:
+    haproxy.org/server-ssl: "true"
 spec:
   type: ClusterIP
   selector:
@@ -17,6 +19,8 @@ kind: Service
 metadata:
   name: asr-api-ingress-internal
   namespace: asr-api
+  annotations:
+    haproxy.org/server-ssl: "true"
 spec:
   clusterIP: None
   selector:
