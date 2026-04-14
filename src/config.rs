@@ -140,6 +140,16 @@ pub struct AppConfig {
 
     #[arg(long, env = "UPLOAD_RESPONSE_INSECURE_TLS", default_value_t = false)]
     pub upload_response_insecure_tls: bool,
+
+    #[arg(
+        long,
+        env = "UPLOAD_RESPONSE_WORKER_HEARTBEAT_INTERVAL_MS",
+        default_value_t = 1_000
+    )]
+    pub upload_response_worker_heartbeat_interval_ms: u64,
+
+    #[arg(long, env = "UPLOAD_RESPONSE_WORKER_TTL_MS", default_value_t = 5_000)]
+    pub upload_response_worker_ttl_ms: u64,
 }
 
 impl AppConfig {
@@ -185,6 +195,14 @@ impl AppConfig {
         anyhow::ensure!(
             self.upload_response_discovery_interval_ms > 0,
             "UPLOAD_RESPONSE_DISCOVERY_INTERVAL_MS must be > 0"
+        );
+        anyhow::ensure!(
+            self.upload_response_worker_heartbeat_interval_ms > 0,
+            "UPLOAD_RESPONSE_WORKER_HEARTBEAT_INTERVAL_MS must be > 0"
+        );
+        anyhow::ensure!(
+            self.upload_response_worker_ttl_ms > 0,
+            "UPLOAD_RESPONSE_WORKER_TTL_MS must be > 0"
         );
 
         if self.role.uses_asr_backend() {

@@ -6,11 +6,11 @@ use crate::deepgram::{
     words_from_committed, ListenOptions, ModelInfo, Word,
 };
 use crate::pcm::rms_level;
-use av_api::cached_audio::decode_cached_f32le_chunk;
-use av_api::linear16::Linear16PcmStream;
 use crate::protocol::{INTERNAL_STREAMING_MODE_HEADER, INTERNAL_STREAMING_MODE_JSONL};
 use anyhow::Result;
 use async_trait::async_trait;
+use av_api::cached_audio::decode_cached_f32le_chunk;
+use av_api::linear16::Linear16PcmStream;
 use bytes::Bytes;
 use futures_util::{SinkExt, StreamExt};
 use http::{header::CONTENT_TYPE, Request, StatusCode};
@@ -29,7 +29,7 @@ use tracing::{debug, error, warn};
 use upload_response::{
     discover_ingress_origins, request_from_headers_slot, request_from_stream_headers,
     RemoteIngressClient, RemoteRequestSlot, RequestControl, ResponseCacheWriter, TailSlot,
-    UploadResponseService,
+    UploadResponseService, WorkerHeartbeatUpdate,
 };
 use uuid::Uuid;
 use web_service::{BodyStream, HandlerResponse, HandlerResult, ServerError, WebSocketHandler};
@@ -189,6 +189,51 @@ impl WorkerState {
         match self.handle_listen_inner(req, body).await {
             Ok(response) => response,
             Err(error) => error_response(classify_error(&error), error.to_string()),
+        }
+    }
+
+    fn worker_heartbeat(&self, inflight: usize) -> WorkerHeartbeatUpdate {
+        let max_inflight = self.config.upload_response_max_inflight;
+        let inflight = inflight.min(max_inflight);
+        WorkerHeartbeatUpdate {
+            max_inflight,
+            inflight,
+            available_slots: max_inflight.saturating_sub(inflight),
+        }
+    }
+
+    async fn publish_local_worker_capacity(
+        &self,
+        service: &UploadResponseService,
+        inflight: usize,
+    ) {
+        service
+            .upsert_worker_heartbeat(
+                &self.config.upload_response_worker_id,
+                self.worker_heartbeat(inflight),
+            )
+            .await;
+    }
+
+    async fn publish_remote_worker_capacity(
+        &self,
+        client: &RemoteIngressClient,
+        origins: &[String],
+        inflight: usize,
+    ) {
+        let heartbeat = self.worker_heartbeat(inflight);
+        for origin in origins {
+            if let Err(error) = client
+                .heartbeat_worker(origin, &self.config.upload_response_worker_id, &heartbeat)
+                .await
+            {
+                warn!(
+                    origin,
+                    worker_id = %self.config.upload_response_worker_id,
+                    error = %error,
+                    "failed to publish remote worker capacity"
+                );
+            }
         }
     }
 
@@ -526,21 +571,39 @@ impl WorkerState {
         let mut poll = interval(Duration::from_millis(
             self.config.upload_response_worker_poll_ms.max(1),
         ));
+        let mut heartbeat = interval(Duration::from_millis(
+            self.config
+                .upload_response_worker_heartbeat_interval_ms
+                .max(1),
+        ));
         let mut inflight = HashSet::new();
         let mut tasks = JoinSet::new();
+        let mut send_heartbeat = true;
 
         loop {
-            poll.tick().await;
+            tokio::select! {
+                _ = poll.tick() => {}
+                _ = heartbeat.tick() => {
+                    send_heartbeat = true;
+                }
+            }
 
             while let Some(joined) = tasks.try_join_next() {
                 match joined {
                     Ok(stream_id) => {
                         inflight.remove(&stream_id);
+                        send_heartbeat = true;
                     }
                     Err(error) => {
                         error!(%error, "cache worker task failed");
                     }
                 }
+            }
+
+            if send_heartbeat {
+                self.publish_local_worker_capacity(&service, inflight.len())
+                    .await;
+                send_heartbeat = false;
             }
 
             if inflight.len() >= self.config.upload_response_max_inflight {
@@ -570,6 +633,7 @@ impl WorkerState {
                     .await;
 
                 inflight.insert(stream.stream_id);
+                send_heartbeat = true;
                 let service = service.clone();
                 let worker = self.clone();
                 let worker_id = self.config.upload_response_worker_id.clone();
@@ -618,16 +682,25 @@ impl WorkerState {
         let mut discovery = interval(Duration::from_millis(
             self.config.upload_response_discovery_interval_ms.max(1),
         ));
+        let mut heartbeat = interval(Duration::from_millis(
+            self.config
+                .upload_response_worker_heartbeat_interval_ms
+                .max(1),
+        ));
         let mut inflight = HashSet::new();
         let mut tasks = JoinSet::new();
         let mut origins: Vec<String> = Vec::new();
         let mut refresh_origins = true;
+        let mut send_heartbeat = true;
 
         loop {
             tokio::select! {
                 _ = poll.tick() => {}
                 _ = discovery.tick() => {
                     refresh_origins = true;
+                }
+                _ = heartbeat.tick() => {
+                    send_heartbeat = true;
                 }
             }
 
@@ -649,17 +722,25 @@ impl WorkerState {
                     }
                 }
                 refresh_origins = false;
+                send_heartbeat = true;
             }
 
             while let Some(joined) = tasks.try_join_next() {
                 match joined {
                     Ok(key) => {
                         inflight.remove(&key);
+                        send_heartbeat = true;
                     }
                     Err(error) => {
                         error!(%error, "remote cache worker task failed");
                     }
                 }
+            }
+
+            if send_heartbeat {
+                self.publish_remote_worker_capacity(&client, &origins, inflight.len())
+                    .await;
+                send_heartbeat = false;
             }
 
             if inflight.len() >= self.config.upload_response_max_inflight {
@@ -722,6 +803,7 @@ impl WorkerState {
                         .await;
 
                     inflight.insert(inflight_key.clone());
+                    send_heartbeat = true;
                     let worker = self.clone();
                     let client = client.clone();
                     let worker_id = self.config.upload_response_worker_id.clone();
@@ -920,8 +1002,8 @@ impl WorkerState {
                     Some(TailSlot::Headers(_)) => {}
                     Some(TailSlot::Body(chunk)) => {
                         received_bytes += chunk.len();
-                        let samples = decode_cached_f32le_chunk(&chunk)
-                            .map_err(anyhow::Error::msg)?;
+                        let samples =
+                            decode_cached_f32le_chunk(&chunk).map_err(anyhow::Error::msg)?;
                         if !state.speech_started_sent
                             && !samples.is_empty()
                             && rms_level(&samples) >= WS_SPEECH_RMS_THRESHOLD
@@ -1002,8 +1084,8 @@ impl WorkerState {
                     Some(RemoteRequestSlot::Headers(_)) => {}
                     Some(RemoteRequestSlot::Body(chunk)) => {
                         received_bytes += chunk.len();
-                        let samples = decode_cached_f32le_chunk(&chunk)
-                            .map_err(anyhow::Error::msg)?;
+                        let samples =
+                            decode_cached_f32le_chunk(&chunk).map_err(anyhow::Error::msg)?;
                         if !state.speech_started_sent
                             && !samples.is_empty()
                             && rms_level(&samples) >= WS_SPEECH_RMS_THRESHOLD

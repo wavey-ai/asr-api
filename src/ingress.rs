@@ -1,10 +1,10 @@
 use crate::config::{AppConfig, ASR_SAMPLE_RATE};
 use crate::deepgram::ListenOptions;
-use av_api::cached_audio::CachedMonoPcmWriter;
-use av_api::linear16::Linear16PcmStream;
 use crate::protocol::{INTERNAL_STREAMING_MODE_HEADER, INTERNAL_STREAMING_MODE_JSONL};
 use anyhow::Result;
 use async_trait::async_trait;
+use av_api::cached_audio::CachedMonoPcmWriter;
+use av_api::linear16::Linear16PcmStream;
 use bytes::Bytes;
 use futures_util::{stream::SplitSink, SinkExt, StreamExt};
 use http::{header::CONTENT_TYPE, HeaderName, HeaderValue, Request, StatusCode};
@@ -72,6 +72,9 @@ impl ListenIngress {
         stream_writer: Box<dyn StreamWriter>,
     ) -> HandlerResult<()> {
         reject_json_requests(&req).map_err(anyhow_to_server_error)?;
+        self.ensure_worker_capacity()
+            .await
+            .map_err(anyhow_to_server_error)?;
         let options = ListenOptions::from_request(&req, &self.config);
 
         let guard = self
@@ -103,7 +106,10 @@ impl ListenIngress {
             result
         });
 
-        let proxy_result = self.cached.proxy_streaming_response(stream_id, stream_writer).await;
+        let proxy_result = self
+            .cached
+            .proxy_streaming_response(stream_id, stream_writer)
+            .await;
         let _ = body_task.await;
         guard.close().await;
         proxy_result
@@ -114,6 +120,9 @@ impl ListenIngress {
         req: Request<()>,
         stream: WebSocketStream<TokioIo<Upgraded>>,
     ) -> HandlerResult<()> {
+        self.ensure_worker_capacity()
+            .await
+            .map_err(anyhow_to_server_error)?;
         let options = ListenOptions::from_request(&req, &self.config);
         let sample_rate = options.sample_rate_hz.unwrap_or(ASR_SAMPLE_RATE);
         let channels = options.channels.max(1);
@@ -212,6 +221,7 @@ impl ListenIngress {
         body: BodyStream,
     ) -> Result<HandlerResponse> {
         reject_json_requests(&req)?;
+        self.ensure_worker_capacity().await?;
         let options = ListenOptions::from_request(&req, &self.config);
 
         let mut guard = self.cached.open_buffered_request().await?;
@@ -234,6 +244,17 @@ impl ListenIngress {
 
         guard.close().await;
         result
+    }
+
+    async fn ensure_worker_capacity(&self) -> Result<()> {
+        let summary = self
+            .service
+            .worker_capacity_summary(Some(self.config.upload_response_worker_ttl_ms))
+            .await;
+        if summary.total_available_slots == 0 {
+            anyhow::bail!("no live worker capacity available");
+        }
+        Ok(())
     }
 
     async fn write_cached_request_headers(
@@ -582,6 +603,8 @@ fn classify_error(error: &anyhow::Error) -> StatusCode {
         || message.contains("audio bytes")
     {
         StatusCode::BAD_REQUEST
+    } else if message.contains("no live worker capacity") {
+        StatusCode::SERVICE_UNAVAILABLE
     } else {
         StatusCode::INTERNAL_SERVER_ERROR
     }
