@@ -19,6 +19,7 @@ clap = { version = "4.5", features = ["derive", "env"] }
 crossbeam-channel = "0.5"
 dotenvy = "0.15"
 futures-util = "0.3"
+gen-id = { git = "https://github.com/wavey-ai/gen-id.git" }
 hyper = { version = "1", features = ["full"] }
 hyper-util = { version = "0.1", features = ["full"] }
 http = "1"
@@ -33,8 +34,7 @@ soundkit-decoder = { git = "https://github.com/wavey-ai/soundkit.git", package =
 tokio = { version = "1.45", features = ["full"] }
 tokio-tungstenite = { version = "0.27", features = ["rustls-tls-webpki-roots"] }
 tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "json"] }
 upload-response = { git = "https://github.com/wavey-ai/web-services.git", package = "upload-response" }
 url = "2.5"
-uuid = { version = "1", features = ["v4"] }
 web-service = { git = "https://github.com/wavey-ai/web-services.git", package = "web-service" }

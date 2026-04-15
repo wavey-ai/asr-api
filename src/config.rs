@@ -9,6 +9,13 @@ pub const DEFAULT_MODEL_NAME: &str = "wavey-parakeet-tdt-onnx";
 pub const DEFAULT_LANGUAGE: &str = "en";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum LogFormat {
+    Json,
+    Pretty,
+    Compact,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 pub enum AppRole {
     Monolith,
     Ingress,
@@ -48,6 +55,9 @@ pub struct AppConfig {
 
     #[arg(long, env = "RUST_LOG", default_value = "info")]
     pub rust_log: String,
+
+    #[arg(long, env = "ASR_LOG_FORMAT", value_enum, default_value_t = LogFormat::Json)]
+    pub log_format: LogFormat,
 
     #[arg(long, env = "PORT", default_value_t = 8443)]
     pub port: u16,

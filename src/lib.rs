@@ -3,6 +3,7 @@ pub mod asr;
 pub mod chunking;
 pub mod config;
 pub mod deepgram;
+pub mod ids;
 pub mod ingress;
 pub mod pcm;
 pub mod protocol;
@@ -14,26 +15,52 @@ use anyhow::{Context, Result};
 use clap::Parser;
 use std::sync::Arc;
 use tracing::info;
-use tracing_subscriber::EnvFilter;
+use tracing_subscriber::{fmt::format::FmtSpan, EnvFilter};
 use upload_response::{ResponseWatcher, UploadResponseRouter, UploadResponseService};
 use web_service::{H2H3Server, Server, ServerBuilder};
 
 #[cfg(feature = "gpu-backend")]
 use crate::asr::AsrBackend;
-use crate::config::AppConfig;
 #[cfg(feature = "gpu-backend")]
 use crate::config::AppRole;
+use crate::config::{AppConfig, LogFormat};
 use crate::ingress::{ListenIngress, ListenIngressWebSocketHandler};
 use crate::router::AppRouter;
 #[cfg(feature = "gpu-backend")]
 use crate::worker::WorkerState;
 
-pub fn init_tracing(rust_log: &str) {
-    let _ = tracing_subscriber::fmt()
-        .with_env_filter(
-            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(rust_log)),
-        )
-        .try_init();
+pub fn init_tracing(rust_log: &str, log_format: LogFormat) {
+    let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(rust_log));
+
+    let _ = match log_format {
+        LogFormat::Json => tracing_subscriber::fmt()
+            .with_env_filter(env_filter)
+            .with_span_events(FmtSpan::CLOSE)
+            .with_target(true)
+            .with_thread_ids(true)
+            .with_thread_names(true)
+            .json()
+            .flatten_event(true)
+            .with_current_span(true)
+            .with_span_list(true)
+            .try_init(),
+        LogFormat::Pretty => tracing_subscriber::fmt()
+            .with_env_filter(env_filter)
+            .with_span_events(FmtSpan::CLOSE)
+            .with_target(true)
+            .with_thread_ids(true)
+            .with_thread_names(true)
+            .pretty()
+            .try_init(),
+        LogFormat::Compact => tracing_subscriber::fmt()
+            .with_env_filter(env_filter)
+            .with_span_events(FmtSpan::CLOSE)
+            .with_target(true)
+            .with_thread_ids(true)
+            .with_thread_names(true)
+            .compact()
+            .try_init(),
+    };
 }
 
 pub async fn run(config: AppConfig) -> Result<()> {
@@ -184,6 +211,6 @@ pub async fn run(config: AppConfig) -> Result<()> {
 pub async fn run_from_env() -> Result<()> {
     dotenvy::dotenv().ok();
     let config = AppConfig::parse();
-    init_tracing(&config.rust_log);
+    init_tracing(&config.rust_log, config.log_format);
     run(config).await
 }

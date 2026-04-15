@@ -55,7 +55,10 @@ impl AsrBackend {
         }
         let decoder = OnnxDecoderClient::new(decoder_pool);
 
-        Ok(Self { featurizer, decoder })
+        Ok(Self {
+            featurizer,
+            decoder,
+        })
     }
 
     pub async fn transcribe_window(

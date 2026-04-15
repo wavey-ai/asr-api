@@ -5,6 +5,7 @@ use crate::deepgram::{
     append_word, build_response, default_model_info, ends_sentence, join_words,
     words_from_committed, ListenOptions, ModelInfo, Word,
 };
+use crate::ids::{ensure_request_id, next_request_id, request_id_from_headers};
 use crate::pcm::rms_level;
 use crate::protocol::{INTERNAL_STREAMING_MODE_HEADER, INTERNAL_STREAMING_MODE_JSONL};
 use anyhow::Result;
@@ -25,13 +26,12 @@ use std::sync::Arc;
 use tokio::task::JoinSet;
 use tokio::time::{interval, Duration};
 use tokio_tungstenite::{tungstenite::Message, WebSocketStream};
-use tracing::{debug, error, warn};
+use tracing::{debug, error, info, info_span, trace, warn, Instrument};
 use upload_response::{
     discover_ingress_origins, request_from_headers_slot, request_from_stream_headers,
     RemoteIngressClient, RemoteRequestSlot, RequestControl, ResponseCacheWriter, TailSlot,
     UploadResponseService, WorkerHeartbeatUpdate,
 };
-use uuid::Uuid;
 use web_service::{BodyStream, HandlerResponse, HandlerResult, ServerError, WebSocketHandler};
 
 #[derive(Clone)]
@@ -242,117 +242,141 @@ impl WorkerState {
         req: Request<()>,
         mut stream: WebSocketStream<TokioIo<Upgraded>>,
     ) -> HandlerResult<()> {
+        let request_id = ensure_request_id(req.headers());
         let options = ListenOptions::from_request(&req, &self.config);
         let sample_rate = options.sample_rate_hz.unwrap_or(ASR_SAMPLE_RATE);
         let channels = options.channels.max(1);
-        let mut pcm_stream = Linear16PcmStream::new(sample_rate, ASR_SAMPLE_RATE, channels)
-            .map_err(|error| ServerError::Config(error.to_string()))?;
-        let request_id = Uuid::new_v4().to_string();
-        let (model_id, model_info) = default_model_info(&options.model);
-        let mut state = WsTranscriptState::new(options, request_id.clone(), model_id, model_info);
-
-        let metadata = WsMetadataEvent {
-            event_type: "Metadata",
+        let span = info_span!(
+            "worker_listen_websocket",
             request_id,
-            sha256: String::new(),
-            created: chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
-            duration: 0.0,
-            channels: 1,
-            model_info: state.primary_model_info().clone(),
-            model_uuid: state.model_id.clone(),
-        };
-        let mut sink = WebSocketJsonSink {
-            stream: &mut stream,
-        };
-        send_json_event(&mut sink, &metadata)
-            .await
-            .map_err(anyhow_to_server_error)?;
+            role = ?self.config.role,
+            transport = "websocket",
+            method = %req.method(),
+            path = %req.uri().path(),
+            sample_rate,
+            channels,
+        );
 
-        while let Some(frame) = stream.next().await {
-            match frame {
-                Ok(Message::Binary(bytes)) => {
-                    let samples = pcm_stream
-                        .push(&bytes)
-                        .map_err(|error| ServerError::Config(error.to_string()))?;
+        async move {
+            let mut pcm_stream = Linear16PcmStream::new(sample_rate, ASR_SAMPLE_RATE, channels)
+                .map_err(|error| ServerError::Config(error.to_string()))?;
+            let request_id_text = request_id.to_string();
+            let (model_id, model_info) = default_model_info(&options.model);
+            let mut state =
+                WsTranscriptState::new(options, request_id_text.clone(), model_id, model_info);
 
-                    if !state.speech_started_sent
-                        && !samples.is_empty()
-                        && rms_level(&samples) >= WS_SPEECH_RMS_THRESHOLD
-                    {
-                        state.speech_started_sent = true;
-                        let event = WsSpeechStartedEvent {
-                            event_type: "SpeechStarted",
-                            channel: [0],
-                            timestamp: state.total_duration_secs(),
-                        };
-                        let mut sink = WebSocketJsonSink {
-                            stream: &mut stream,
-                        };
-                        send_json_event(&mut sink, &event)
-                            .await
-                            .map_err(anyhow_to_server_error)?;
-                    }
+            let metadata = WsMetadataEvent {
+                event_type: "Metadata",
+                request_id: request_id_text,
+                sha256: String::new(),
+                created: chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
+                duration: 0.0,
+                channels: 1,
+                model_info: state.primary_model_info().clone(),
+                model_uuid: state.model_id.clone(),
+            };
+            let mut sink = WebSocketJsonSink {
+                stream: &mut stream,
+            };
+            send_json_event(&mut sink, &metadata)
+                .await
+                .map_err(anyhow_to_server_error)?;
+            info!("worker websocket session started");
 
-                    let mut sink = WebSocketJsonSink {
-                        stream: &mut stream,
-                    };
-                    self.process_streaming_samples(&mut state, &samples, &mut sink)
-                        .await
-                        .map_err(anyhow_to_server_error)?;
-                }
-                Ok(Message::Text(text)) => {
-                    let event = serde_json::from_str::<WsClientEvent>(&text).map_err(|error| {
-                        ServerError::Config(format!("invalid websocket control message: {error}"))
-                    })?;
-                    match event.event_type.as_str() {
-                        "KeepAlive" => {}
-                        "Finalize" => {
+            while let Some(frame) = stream.next().await {
+                match frame {
+                    Ok(Message::Binary(bytes)) => {
+                        let samples = pcm_stream
+                            .push(&bytes)
+                            .map_err(|error| ServerError::Config(error.to_string()))?;
+
+                        if !state.speech_started_sent
+                            && !samples.is_empty()
+                            && rms_level(&samples) >= WS_SPEECH_RMS_THRESHOLD
+                        {
+                            state.speech_started_sent = true;
+                            let event = WsSpeechStartedEvent {
+                                event_type: "SpeechStarted",
+                                channel: [0],
+                                timestamp: state.total_duration_secs(),
+                            };
                             let mut sink = WebSocketJsonSink {
                                 stream: &mut stream,
                             };
-                            self.flush_streaming_session(&mut state, None, false, &mut sink)
+                            send_json_event(&mut sink, &event)
                                 .await
                                 .map_err(anyhow_to_server_error)?;
                         }
-                        "CloseStream" => {
-                            let mut sink = WebSocketJsonSink {
-                                stream: &mut stream,
-                            };
-                            self.flush_streaming_session(
-                                &mut state,
-                                Some(&mut pcm_stream),
-                                true,
-                                &mut sink,
-                            )
+
+                        let mut sink = WebSocketJsonSink {
+                            stream: &mut stream,
+                        };
+                        self.process_streaming_samples(&mut state, &samples, &mut sink)
                             .await
                             .map_err(anyhow_to_server_error)?;
-                            let _ = stream.close(None).await;
-                            return Ok(());
-                        }
-                        other => {
-                            return Err(ServerError::Config(format!(
-                                "unsupported websocket control type: {other}"
-                            )));
+                    }
+                    Ok(Message::Text(text)) => {
+                        let event =
+                            serde_json::from_str::<WsClientEvent>(&text).map_err(|error| {
+                                ServerError::Config(format!(
+                                    "invalid websocket control message: {error}"
+                                ))
+                            })?;
+                        match event.event_type.as_str() {
+                            "KeepAlive" => {}
+                            "Finalize" => {
+                                let mut sink = WebSocketJsonSink {
+                                    stream: &mut stream,
+                                };
+                                self.flush_streaming_session(&mut state, None, false, &mut sink)
+                                    .await
+                                    .map_err(anyhow_to_server_error)?;
+                            }
+                            "CloseStream" => {
+                                let mut sink = WebSocketJsonSink {
+                                    stream: &mut stream,
+                                };
+                                self.flush_streaming_session(
+                                    &mut state,
+                                    Some(&mut pcm_stream),
+                                    true,
+                                    &mut sink,
+                                )
+                                .await
+                                .map_err(anyhow_to_server_error)?;
+                                let _ = stream.close(None).await;
+                                info!("worker websocket session closed");
+                                return Ok(());
+                            }
+                            other => {
+                                return Err(ServerError::Config(format!(
+                                    "unsupported websocket control type: {other}"
+                                )));
+                            }
                         }
                     }
+                    Ok(Message::Ping(payload)) => {
+                        stream
+                            .send(Message::Pong(payload))
+                            .await
+                            .map_err(|error| ServerError::Handler(Box::new(error)))?;
+                    }
+                    Ok(Message::Pong(_)) => {}
+                    Ok(Message::Close(frame)) => {
+                        let _ = stream.close(frame).await;
+                        info!("worker websocket session closed by peer");
+                        return Ok(());
+                    }
+                    Ok(Message::Frame(_)) => {}
+                    Err(error) => return Err(ServerError::Handler(Box::new(error))),
                 }
-                Ok(Message::Ping(payload)) => {
-                    stream
-                        .send(Message::Pong(payload))
-                        .await
-                        .map_err(|error| ServerError::Handler(Box::new(error)))?;
-                }
-                Ok(Message::Pong(_)) => {}
-                Ok(Message::Close(frame)) => {
-                    let _ = stream.close(frame).await;
-                    return Ok(());
-                }
-                Ok(Message::Frame(_)) => {}
-                Err(error) => return Err(ServerError::Handler(Box::new(error))),
             }
-        }
 
-        Ok(())
+            info!("worker websocket session completed");
+            Ok(())
+        }
+        .instrument(span)
+        .await
     }
 
     async fn process_streaming_samples<S: JsonEventSink + Send>(
@@ -568,6 +592,13 @@ impl WorkerState {
     }
 
     async fn run_cache_worker(self: Arc<Self>, service: Arc<UploadResponseService>) {
+        info!(
+            worker_id = %self.config.upload_response_worker_id,
+            max_inflight = self.config.upload_response_max_inflight,
+            poll_ms = self.config.upload_response_worker_poll_ms,
+            heartbeat_ms = self.config.upload_response_worker_heartbeat_interval_ms,
+            "local cache worker started"
+        );
         let mut poll = interval(Duration::from_millis(
             self.config.upload_response_worker_poll_ms.max(1),
         ));
@@ -692,6 +723,15 @@ impl WorkerState {
         let mut origins: Vec<String> = Vec::new();
         let mut refresh_origins = true;
         let mut send_heartbeat = true;
+
+        info!(
+            worker_id = %self.config.upload_response_worker_id,
+            max_inflight = self.config.upload_response_max_inflight,
+            poll_ms = self.config.upload_response_worker_poll_ms,
+            discovery_ms = self.config.upload_response_discovery_interval_ms,
+            heartbeat_ms = self.config.upload_response_worker_heartbeat_interval_ms,
+            "remote cache worker started"
+        );
 
         loop {
             tokio::select! {
@@ -852,19 +892,38 @@ impl WorkerState {
         req: Request<()>,
         body: BodyStream,
     ) -> Result<HandlerResponse> {
-        reject_json_requests(&req)?;
-        let options = ListenOptions::from_request(&req, &self.config);
-        let prepared = self.transcribe_upload(body).await?;
-        let fallback_transcript = prepared.fallback_fragments.join(" ");
-        let payload = build_response(
-            Uuid::new_v4().to_string(),
-            prepared.sha256,
-            prepared.duration_secs,
-            &prepared.committed_words,
-            &fallback_transcript,
-            &options,
+        let request_id = ensure_request_id(req.headers());
+        let span = info_span!(
+            "worker_listen_http",
+            request_id,
+            role = ?self.config.role,
+            transport = "http",
+            method = %req.method(),
+            path = %req.uri().path(),
         );
-        json_response(StatusCode::OK, &payload)
+        async move {
+            reject_json_requests(&req)?;
+            let options = ListenOptions::from_request(&req, &self.config);
+            let prepared = self.transcribe_upload(body).await?;
+            let fallback_transcript = prepared.fallback_fragments.join(" ");
+            let payload = build_response(
+                request_id.to_string(),
+                prepared.sha256,
+                prepared.duration_secs,
+                &prepared.committed_words,
+                &fallback_transcript,
+                &options,
+            );
+            info!(
+                duration_secs = prepared.duration_secs,
+                committed_words = prepared.committed_words.len(),
+                fallback_fragments = prepared.fallback_fragments.len(),
+                "worker http transcription completed"
+            );
+            json_response(StatusCode::OK, &payload)
+        }
+        .instrument(span)
+        .await
     }
 
     async fn process_cached_stream(
@@ -872,39 +931,61 @@ impl WorkerState {
         service: Arc<UploadResponseService>,
         stream_id: u64,
     ) -> Result<()> {
-        if let Some(request) = self
+        let initial_request = self
             .read_cached_request_headers(&service, stream_id)
-            .await?
-        {
-            if is_streaming_request(&request) {
-                let mut writer = JsonLineResponseWriter::local(
-                    Arc::clone(&service),
-                    stream_id,
-                    self.config.upload_response_config().slot_bytes(),
-                );
-                return self
-                    .stream_cached_upload(service, stream_id, request, &mut writer)
-                    .await;
-            }
-        }
-
-        let (request, prepared) = self.transcribe_cached_upload(&service, stream_id).await?;
-        let options = ListenOptions::from_request(&request, &self.config);
-        let fallback_transcript = prepared.fallback_fragments.join(" ");
-        let payload = build_response(
-            Uuid::new_v4().to_string(),
-            prepared.sha256,
-            prepared.duration_secs,
-            &prepared.committed_words,
-            &fallback_transcript,
-            &options,
+            .await?;
+        let request_id = initial_request
+            .as_ref()
+            .and_then(|request| request_id_from_headers(request.headers()))
+            .unwrap_or_else(next_request_id);
+        let span = info_span!(
+            "worker_cached_stream",
+            request_id,
+            stream_id,
+            worker_id = %self.config.upload_response_worker_id,
+            source = "local_cache",
         );
-        let response = json_response(StatusCode::OK, &payload)?;
-        service
-            .write_handler_response(stream_id, response)
-            .await
-            .map_err(anyhow::Error::msg)?;
-        Ok(())
+
+        async move {
+            if let Some(request) = initial_request {
+                if is_streaming_request(&request) {
+                    let mut writer = JsonLineResponseWriter::local(
+                        Arc::clone(&service),
+                        stream_id,
+                        self.config.upload_response_config().slot_bytes(),
+                    );
+                    return self
+                        .stream_cached_upload(service, stream_id, request, &mut writer)
+                        .await;
+                }
+            }
+
+            let (request, prepared) = self.transcribe_cached_upload(&service, stream_id).await?;
+            let options = ListenOptions::from_request(&request, &self.config);
+            let fallback_transcript = prepared.fallback_fragments.join(" ");
+            let payload = build_response(
+                request_id.to_string(),
+                prepared.sha256,
+                prepared.duration_secs,
+                &prepared.committed_words,
+                &fallback_transcript,
+                &options,
+            );
+            let response = json_response(StatusCode::OK, &payload)?;
+            service
+                .write_handler_response(stream_id, response)
+                .await
+                .map_err(anyhow::Error::msg)?;
+            info!(
+                duration_secs = prepared.duration_secs,
+                committed_words = prepared.committed_words.len(),
+                fallback_fragments = prepared.fallback_fragments.len(),
+                "cached transcription completed"
+            );
+            Ok(())
+        }
+        .instrument(span)
+        .await
     }
 
     async fn process_remote_stream(
@@ -913,38 +994,62 @@ impl WorkerState {
         origin: &str,
         stream_id: u64,
     ) -> Result<()> {
-        if let Some(request) = client.request_headers(origin, stream_id).await? {
-            if is_streaming_request(&request) {
-                let mut writer = JsonLineResponseWriter::remote(
-                    client.clone(),
-                    origin.to_string(),
-                    stream_id,
-                    client.slot_bytes(),
-                );
-                return self
-                    .stream_remote_upload(client, origin, stream_id, request, &mut writer)
-                    .await;
-            }
-        }
-
-        let (request, prepared) = self
-            .transcribe_remote_upload(client, origin, stream_id)
-            .await?;
-        let options = ListenOptions::from_request(&request, &self.config);
-        let fallback_transcript = prepared.fallback_fragments.join(" ");
-        let payload = build_response(
-            Uuid::new_v4().to_string(),
-            prepared.sha256,
-            prepared.duration_secs,
-            &prepared.committed_words,
-            &fallback_transcript,
-            &options,
+        let initial_request = client.request_headers(origin, stream_id).await?;
+        let request_id = initial_request
+            .as_ref()
+            .and_then(|request| request_id_from_headers(request.headers()))
+            .unwrap_or_else(next_request_id);
+        let span = info_span!(
+            "worker_remote_stream",
+            request_id,
+            stream_id,
+            worker_id = %self.config.upload_response_worker_id,
+            origin = %origin,
+            source = "remote_cache",
         );
-        let response = json_response(StatusCode::OK, &payload)?;
-        client
-            .write_handler_response(origin, stream_id, response)
-            .await?;
-        Ok(())
+
+        async move {
+            if let Some(request) = initial_request {
+                if is_streaming_request(&request) {
+                    let mut writer = JsonLineResponseWriter::remote(
+                        client.clone(),
+                        origin.to_string(),
+                        stream_id,
+                        client.slot_bytes(),
+                    );
+                    return self
+                        .stream_remote_upload(client, origin, stream_id, request, &mut writer)
+                        .await;
+                }
+            }
+
+            let (request, prepared) = self
+                .transcribe_remote_upload(client, origin, stream_id)
+                .await?;
+            let options = ListenOptions::from_request(&request, &self.config);
+            let fallback_transcript = prepared.fallback_fragments.join(" ");
+            let payload = build_response(
+                request_id.to_string(),
+                prepared.sha256,
+                prepared.duration_secs,
+                &prepared.committed_words,
+                &fallback_transcript,
+                &options,
+            );
+            let response = json_response(StatusCode::OK, &payload)?;
+            client
+                .write_handler_response(origin, stream_id, response)
+                .await?;
+            info!(
+                duration_secs = prepared.duration_secs,
+                committed_words = prepared.committed_words.len(),
+                fallback_fragments = prepared.fallback_fragments.len(),
+                "remote cached transcription completed"
+            );
+            Ok(())
+        }
+        .instrument(span)
+        .await
     }
 
     async fn read_cached_request_headers(
@@ -970,7 +1075,9 @@ impl WorkerState {
         ));
         let options = ListenOptions::from_request(&request, &self.config);
         let (model_id, model_info) = default_model_info(&options.model);
-        let request_id = Uuid::new_v4().to_string();
+        let request_id = request_id_from_headers(request.headers())
+            .unwrap_or_else(next_request_id)
+            .to_string();
         let mut state = WsTranscriptState::new(options, request_id.clone(), model_id, model_info);
         let mut received_bytes = 0usize;
         let mut last_slot = 0usize;
@@ -986,6 +1093,7 @@ impl WorkerState {
             model_uuid: state.model_id.clone(),
         };
         send_json_event(writer, &metadata).await?;
+        info!("started cached streaming transcription");
 
         'stream: loop {
             poll.tick().await;
@@ -1039,6 +1147,11 @@ impl WorkerState {
 
         self.flush_streaming_session(&mut state, None, true, writer)
             .await?;
+        info!(
+            received_bytes,
+            duration_secs = state.total_duration_secs(),
+            "finished cached streaming transcription"
+        );
         writer.finish().await
     }
 
@@ -1055,7 +1168,9 @@ impl WorkerState {
         ));
         let options = ListenOptions::from_request(&request, &self.config);
         let (model_id, model_info) = default_model_info(&options.model);
-        let request_id = Uuid::new_v4().to_string();
+        let request_id = request_id_from_headers(request.headers())
+            .unwrap_or_else(next_request_id)
+            .to_string();
         let mut state = WsTranscriptState::new(options, request_id.clone(), model_id, model_info);
         let mut received_bytes = 0usize;
         let mut last_slot = 0usize;
@@ -1071,6 +1186,7 @@ impl WorkerState {
             model_uuid: state.model_id.clone(),
         };
         send_json_event(writer, &metadata).await?;
+        info!(origin, "started remote cached streaming transcription");
 
         'stream: loop {
             poll.tick().await;
@@ -1121,6 +1237,12 @@ impl WorkerState {
 
         self.flush_streaming_session(&mut state, None, true, writer)
             .await?;
+        info!(
+            origin,
+            received_bytes,
+            duration_secs = state.total_duration_secs(),
+            "finished remote cached streaming transcription"
+        );
         writer.finish().await
     }
 
@@ -1216,15 +1338,21 @@ impl WorkerState {
             .await?;
         }
 
-        Ok((
-            request,
-            PreparedTranscript {
-                committed_words,
-                fallback_fragments,
-                duration_secs: total_samples as f64 / ASR_SAMPLE_RATE as f64,
-                sha256: format!("{:x}", hasher.finalize()),
-            },
-        ))
+        let prepared = PreparedTranscript {
+            committed_words,
+            fallback_fragments,
+            duration_secs: total_samples as f64 / ASR_SAMPLE_RATE as f64,
+            sha256: format!("{:x}", hasher.finalize()),
+        };
+        debug!(
+            stream_id,
+            received_bytes,
+            duration_secs = prepared.duration_secs,
+            committed_words = prepared.committed_words.len(),
+            fallback_fragments = prepared.fallback_fragments.len(),
+            "finished cached upload transcription"
+        );
+        Ok((request, prepared))
     }
 
     async fn transcribe_remote_upload(
@@ -1317,15 +1445,22 @@ impl WorkerState {
             .await?;
         }
 
-        Ok((
-            request,
-            PreparedTranscript {
-                committed_words,
-                fallback_fragments,
-                duration_secs: total_samples as f64 / ASR_SAMPLE_RATE as f64,
-                sha256: format!("{:x}", hasher.finalize()),
-            },
-        ))
+        let prepared = PreparedTranscript {
+            committed_words,
+            fallback_fragments,
+            duration_secs: total_samples as f64 / ASR_SAMPLE_RATE as f64,
+            sha256: format!("{:x}", hasher.finalize()),
+        };
+        debug!(
+            origin,
+            stream_id,
+            received_bytes,
+            duration_secs = prepared.duration_secs,
+            committed_words = prepared.committed_words.len(),
+            fallback_fragments = prepared.fallback_fragments.len(),
+            "finished remote upload transcription"
+        );
+        Ok((request, prepared))
     }
 
     async fn transcribe_upload(&self, mut body: BodyStream) -> Result<PreparedTranscript> {
@@ -1394,12 +1529,20 @@ impl WorkerState {
             .await?;
         }
 
-        Ok(PreparedTranscript {
+        let prepared = PreparedTranscript {
             committed_words,
             fallback_fragments,
             duration_secs: total_samples as f64 / ASR_SAMPLE_RATE as f64,
             sha256: format!("{:x}", hasher.finalize()),
-        })
+        };
+        debug!(
+            received_bytes,
+            duration_secs = prepared.duration_secs,
+            committed_words = prepared.committed_words.len(),
+            fallback_fragments = prepared.fallback_fragments.len(),
+            "finished direct upload transcription"
+        );
+        Ok(prepared)
     }
 
     fn new_decoder() -> DecodePipelineHandle {
@@ -1523,6 +1666,15 @@ impl WorkerState {
         if samples.is_empty() {
             return Ok(());
         }
+
+        trace!(
+            seq,
+            start_sample,
+            sample_count = samples.len(),
+            is_final,
+            stable_samples,
+            "transcribing window"
+        );
 
         let result = self
             .backend

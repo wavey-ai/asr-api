@@ -28,6 +28,7 @@ The split is deliberate:
 - `ASR_TORCH_SESSIONS`: featurizer sessions per device, default `1`
 - `ASR_ONNX_SESSIONS`: decoder sessions per device, default `1`
 - `ASR_API_ROLE`: `monolith`, `ingress`, or `worker`
+- `ASR_LOG_FORMAT`: `json`, `pretty`, or `compact`, default `json`
 - `PORT`: TLS port, default `8443`
 - `ENABLE_H3`: enable HTTP/3 in addition to HTTP/2
 - `TLS_CERT_PATH` / `TLS_KEY_PATH`: optional PEM paths; if omitted the workspace's default local TLS material is used
@@ -49,6 +50,8 @@ The split is deliberate:
 - `UPLOAD_RESPONSE_INSECURE_TLS`: allow self-signed / internal TLS for worker mode
 
 `ASR_MODEL_DIR` is only required for `monolith` and `worker`. Pure `ingress` mode does not load the model.
+
+Correlation IDs use Wavey's snowflake generator and are propagated internally in `x-wavey-request-id`. If the client supplies a numeric `x-request-id`, `asr-api` will reuse it; otherwise ingress or monolith will mint one and carry it through the request path.
 
 ## Local Run
 
