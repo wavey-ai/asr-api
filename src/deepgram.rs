@@ -572,8 +572,9 @@ mod tests {
 
     fn test_config() -> AppConfig {
         AppConfig {
-            role: AppRole::Monolith,
+            role: AppRole::Ingress,
             rust_log: "info".into(),
+            log_format: crate::config::LogFormat::Json,
             port: 8443,
             enable_h3: false,
             tls_cert_path: None,

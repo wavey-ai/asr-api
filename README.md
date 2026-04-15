@@ -2,11 +2,10 @@
 
 `asr-api` serves Deepgram-style prerecorded transcription over Wavey's `web-service` stack.
 
-It now supports three runtime roles:
+It now supports two runtime roles:
 
-1. `monolith`: one process owns `/v1/listen`, decodes audio to normalized PCM, and runs the local ASR worker against the in-process `upload-response` cache.
-2. `ingress`: CPU-oriented front door. It accepts `POST /v1/listen`, decodes supported audio through `soundkit-decoder`, normalizes to mono 16 kHz PCM, writes those PCM chunks into `upload-response`, and waits for a worker response.
-3. `worker`: GPU-oriented worker. It discovers ingress pods over the internal cache API, claims cached streams, runs `asr-torch` featurization plus `asr-onnx` decoding, then writes the final Deepgram-compatible JSON response back to the owning ingress pod.
+1. `ingress`: CPU-oriented front door. It accepts `POST /v1/listen`, decodes supported audio through `soundkit-decoder`, normalizes to mono 16 kHz PCM, writes those PCM chunks into `upload-response`, and waits for a worker response.
+2. `worker`: GPU-oriented worker. It discovers ingress pods over the internal cache API, claims cached streams, runs `asr-torch` featurization plus `asr-onnx` decoding, then writes the final Deepgram-compatible JSON response back to the owning ingress pod.
 
 The split is deliberate:
 
@@ -27,7 +26,7 @@ The split is deliberate:
 - `ASR_DEVICE_IDS`: comma-separated GPU ids, default `0`
 - `ASR_TORCH_SESSIONS`: featurizer sessions per device, default `1`
 - `ASR_ONNX_SESSIONS`: decoder sessions per device, default `1`
-- `ASR_API_ROLE`: `monolith`, `ingress`, or `worker`
+- `ASR_API_ROLE`: `ingress` or `worker`
 - `ASR_LOG_FORMAT`: `json`, `pretty`, or `compact`, default `json`
 - `PORT`: TLS port, default `8443`
 - `ENABLE_H3`: enable HTTP/3 in addition to HTTP/2
@@ -42,22 +41,22 @@ The split is deliberate:
 - `UPLOAD_RESPONSE_TIMEOUT_MS`: listen request timeout while waiting for the worker response, default `30000`
 - `UPLOAD_RESPONSE_WATCH_POLL_MS`: response watcher poll interval, default `1`
 - `UPLOAD_RESPONSE_WORKER_POLL_MS`: local worker poll interval for cached streams, default `2`
-- `UPLOAD_RESPONSE_MAX_INFLIGHT`: max simultaneously claimed cached streams for the monolith worker, default `2`
-- `UPLOAD_RESPONSE_WORKER_ID`: local worker identity for cache claims, default `asr-api-monolith`
+- `UPLOAD_RESPONSE_MAX_INFLIGHT`: max simultaneously claimed cached streams per worker process, default `2`
+- `UPLOAD_RESPONSE_WORKER_ID`: worker identity for cache claims, default `asr-api-worker`
 - `UPLOAD_RESPONSE_INGRESS_URLS`: optional comma-separated ingress origins for worker mode
 - `UPLOAD_RESPONSE_DISCOVERY_DNS`: optional `host:port` to resolve into ingress pod IPs for worker mode
 - `UPLOAD_RESPONSE_DISCOVERY_INTERVAL_MS`: ingress discovery refresh interval, default `2000`
 - `UPLOAD_RESPONSE_INSECURE_TLS`: allow self-signed / internal TLS for worker mode
 
-`ASR_MODEL_DIR` is only required for `monolith` and `worker`. Pure `ingress` mode does not load the model.
+`ASR_MODEL_DIR` is only required for `worker`. Pure `ingress` mode does not load the model.
 
-Correlation IDs use Wavey's snowflake generator and are propagated internally in `x-wavey-request-id`. If the client supplies a numeric `x-request-id`, `asr-api` will reuse it; otherwise ingress or monolith will mint one and carry it through the request path.
+Correlation IDs use Wavey's snowflake generator and are propagated internally in `x-wavey-request-id`. If the client supplies a numeric `x-request-id`, `asr-api` will reuse it; otherwise ingress will mint one and carry it through the request path.
 
 ## Local Run
 
 This repo currently builds `asr-torch` through `tch`, so local development expects PyTorch to be available through Python.
 
-macOS example:
+macOS split example:
 
 ```bash
 export LIBTORCH_USE_PYTORCH=1
@@ -69,22 +68,14 @@ PY
 )"
 
 cargo run -- \
-  --role monolith \
-  --model-dir /path/to/parakeet-tdt
-```
-
-Split example:
-
-```bash
-cargo run -- --role ingress
-```
-
-```bash
-cargo run -- \
   --role worker \
   --model-dir /path/to/parakeet-tdt \
   --upload-response-ingress-urls https://127.0.0.1:8443 \
   --upload-response-insecure-tls
+```
+
+```bash
+cargo run -- --role ingress
 ```
 
 ## Request
@@ -110,7 +101,7 @@ JSON URL jobs are not implemented yet. This service currently supports uploaded 
 
 ## Internal Cache API
 
-Ingress and monolith roles also serve the `upload-response` cache API for inspection and worker handoff:
+Ingress serves the `upload-response` cache API for inspection and worker handoff:
 
 - `GET /_upload_response/streams`
 - `GET /_upload_response/streams/{stream_id}`

@@ -17,30 +17,21 @@ pub enum LogFormat {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 pub enum AppRole {
-    Monolith,
     Ingress,
     Worker,
 }
 
 impl AppRole {
     pub fn uses_asr_backend(self) -> bool {
-        matches!(self, Self::Monolith | Self::Worker)
+        matches!(self, Self::Worker)
     }
 
     pub fn serves_listen(self) -> bool {
-        matches!(self, Self::Monolith | Self::Ingress)
+        matches!(self, Self::Ingress)
     }
 
     pub fn exposes_upload_cache(self) -> bool {
-        matches!(self, Self::Monolith | Self::Ingress)
-    }
-
-    pub fn runs_local_worker(self) -> bool {
-        matches!(self, Self::Monolith)
-    }
-
-    pub fn runs_remote_worker(self) -> bool {
-        matches!(self, Self::Worker)
+        matches!(self, Self::Ingress)
     }
 }
 
@@ -50,7 +41,7 @@ impl AppRole {
     about = "Deepgram-compatible ASR service over Wavey's web-service stack"
 )]
 pub struct AppConfig {
-    #[arg(long, env = "ASR_API_ROLE", value_enum, default_value_t = AppRole::Monolith)]
+    #[arg(long, env = "ASR_API_ROLE", value_enum, default_value_t = AppRole::Ingress)]
     pub role: AppRole,
 
     #[arg(long, env = "RUST_LOG", default_value = "info")]
@@ -131,7 +122,7 @@ pub struct AppConfig {
     #[arg(
         long,
         env = "UPLOAD_RESPONSE_WORKER_ID",
-        default_value = "asr-api-monolith"
+        default_value = "asr-api-worker"
     )]
     pub upload_response_worker_id: String,
 
@@ -278,7 +269,7 @@ impl AppConfig {
             }
         }
 
-        if self.role.runs_remote_worker() {
+        if matches!(self.role, AppRole::Worker) {
             anyhow::ensure!(
                 !self.upload_response_ingress_urls.is_empty()
                     || self

@@ -122,18 +122,6 @@ pub async fn run(config: AppConfig) -> Result<()> {
 
     #[cfg(feature = "gpu-backend")]
     let _worker_handle = match config.role {
-        AppRole::Monolith => Some(
-            worker_state
-                .as_ref()
-                .expect("monolith role must have worker state")
-                .clone()
-                .spawn_cache_worker(
-                    upload_service
-                        .as_ref()
-                        .expect("monolith role must have upload cache")
-                        .clone(),
-                ),
-        ),
         AppRole::Worker => Some(
             worker_state
                 .as_ref()
@@ -149,7 +137,6 @@ pub async fn run(config: AppConfig) -> Result<()> {
         .map(|upload_service| Arc::new(UploadResponseRouter::new(upload_service.clone())));
     let listen_ingress = upload_service
         .as_ref()
-        .filter(|_| config.role.serves_listen())
         .map(|upload_service| Arc::new(ListenIngress::new(config.clone(), upload_service.clone())));
     let listen_ws = listen_ingress
         .as_ref()
