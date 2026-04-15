@@ -1,6 +1,9 @@
 use crate::chunking::TimedWord;
 use anyhow::{Context, Result};
-use asr_onnx::{Config as OnnxConfig, JobMeta, TranscriberPool, TranscriptionResult};
+use asr_onnx::{
+    Config as OnnxConfig, JobMeta, TranscriberPool as OnnxDecoderPool,
+    TranscriptionResult as OnnxResult,
+};
 use asr_torch::{FeaturizerPool, MelFeaturesPayload};
 use crossbeam_channel::Sender;
 use ndarray::Array2;
@@ -23,7 +26,7 @@ pub struct WindowTranscription {
 
 pub struct AsrBackend {
     featurizer: FeaturizerClient,
-    transcriber: OnnxClient,
+    decoder: OnnxDecoderClient,
 }
 
 impl AsrBackend {
@@ -39,21 +42,20 @@ impl AsrBackend {
         let featurizer = FeaturizerClient::new(featurizer_pool);
 
         let onnx_config = OnnxConfig::default().with_num_sessions(onnx_sessions);
-        let transcriber_pool = TranscriberPool::new(model_dir, vocab_path, device_ids, onnx_config)
-            .context("failed to initialize asr-onnx transcriber pool")?;
+        let decoder_pool = OnnxDecoderPool::new(model_dir, vocab_path, device_ids, onnx_config)
+            .context("failed to initialize asr-onnx decoder pool")?;
         let expected_ready = device_ids.len().max(1) * onnx_sessions;
         for ready_idx in 0..expected_ready {
-            transcriber_pool
+            decoder_pool
                 .ready()
                 .recv_timeout(Duration::from_secs(120))
-                .with_context(|| format!("timed out waiting for ASR ONNX session {ready_idx}"))?;
+                .with_context(|| {
+                    format!("timed out waiting for ASR ONNX decoder session {ready_idx}")
+                })?;
         }
-        let transcriber = OnnxClient::new(transcriber_pool);
+        let decoder = OnnxDecoderClient::new(decoder_pool);
 
-        Ok(Self {
-            featurizer,
-            transcriber,
-        })
+        Ok(Self { featurizer, decoder })
     }
 
     pub async fn transcribe_window(
@@ -65,8 +67,8 @@ impl AsrBackend {
         let features_array = Array2::from_shape_vec((features.rows, features.cols), features.data)
             .context("invalid mel feature tensor shape from asr-torch")?;
         let result = self
-            .transcriber
-            .transcribe(
+            .decoder
+            .decode(
                 format!("chunk-{seq}"),
                 features_array,
                 JobMeta {
@@ -161,20 +163,20 @@ impl FeaturizerClient {
     }
 }
 
-struct OnnxClient {
-    pool: Arc<TranscriberPool>,
-    state: Arc<Mutex<OnnxState>>,
+struct OnnxDecoderClient {
+    pool: Arc<OnnxDecoderPool>,
+    state: Arc<Mutex<OnnxDecoderState>>,
 }
 
-struct OnnxState {
-    pending: HashMap<u64, oneshot::Sender<std::result::Result<TranscriptionResult, String>>>,
-    completed: HashMap<u64, std::result::Result<TranscriptionResult, String>>,
+struct OnnxDecoderState {
+    pending: HashMap<u64, oneshot::Sender<std::result::Result<OnnxResult, String>>>,
+    completed: HashMap<u64, std::result::Result<OnnxResult, String>>,
 }
 
-impl OnnxClient {
-    fn new(pool: TranscriberPool) -> Self {
+impl OnnxDecoderClient {
+    fn new(pool: OnnxDecoderPool) -> Self {
         let pool = Arc::new(pool);
-        let state = Arc::new(Mutex::new(OnnxState {
+        let state = Arc::new(Mutex::new(OnnxDecoderState {
             pending: HashMap::new(),
             completed: HashMap::new(),
         }));
@@ -183,7 +185,7 @@ impl OnnxClient {
         let dispatch_state = Arc::clone(&state);
         thread::spawn(move || {
             for result in result_rx {
-                dispatch_onnx_result(&dispatch_state, result);
+                dispatch_onnx_decoder_result(&dispatch_state, result);
             }
 
             let mut guard = dispatch_state.lock().expect("onnx state mutex poisoned");
@@ -196,12 +198,12 @@ impl OnnxClient {
         Self { pool, state }
     }
 
-    async fn transcribe(
+    async fn decode(
         &self,
         name: String,
         features: Array2<f32>,
         meta: JobMeta,
-    ) -> Result<TranscriptionResult> {
+    ) -> Result<OnnxResult> {
         let job_id = self
             .pool
             .submit(name, features, meta)
@@ -224,7 +226,7 @@ impl OnnxClient {
     }
 }
 
-fn dispatch_onnx_result(state: &Arc<Mutex<OnnxState>>, result: TranscriptionResult) {
+fn dispatch_onnx_decoder_result(state: &Arc<Mutex<OnnxDecoderState>>, result: OnnxResult) {
     let mut guard = state.lock().expect("onnx state mutex poisoned");
     if let Some(sender) = guard.pending.remove(&result.job_id) {
         let _ = sender.send(Ok(result));
