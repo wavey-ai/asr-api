@@ -40,7 +40,7 @@ impl ListenOptions {
             paragraphs: false,
             timestamps: false,
             words: false,
-            interim_results: true,
+            interim_results: false,
             endpointing_ms: None,
             utterance_split_secs: config.utt_split_seconds,
             language: DEFAULT_LANGUAGE.to_string(),
@@ -599,6 +599,8 @@ mod tests {
             upload_response_discovery_dns: None,
             upload_response_discovery_interval_ms: 2_000,
             upload_response_insecure_tls: false,
+            upload_response_worker_heartbeat_interval_ms: 1_000,
+            upload_response_worker_ttl_ms: 5_000,
         }
     }
 
@@ -606,7 +608,7 @@ mod tests {
     fn parses_query_flags() {
         let config = test_config();
         let req = Request::builder()
-            .uri("/v1/listen?utterances=true&paragraphs=1&utt_split=1.5&language=fr&model=nova&timestamps=true&encoding=linear16&sample_rate=8000&channels=2&endpointing=250")
+            .uri("/v1/listen?utterances=true&paragraphs=1&utt_split=1.5&language=fr&model=nova&timestamps=true&interim_results=true&encoding=linear16&sample_rate=8000&channels=2&endpointing=250")
             .body(())
             .unwrap();
         let options = ListenOptions::from_request(&req, &config);
@@ -614,6 +616,7 @@ mod tests {
         assert!(options.paragraphs);
         assert!(options.timestamps);
         assert!(options.words);
+        assert!(options.interim_results);
         assert_eq!(options.utterance_split_secs, 1.5);
         assert_eq!(options.language, "fr");
         assert_eq!(options.model, "nova");
@@ -659,5 +662,13 @@ mod tests {
         let options = ListenOptions::from_request(&req, &config);
         assert!(!options.timestamps);
         assert!(!options.words);
+    }
+
+    #[test]
+    fn defaults_interim_results_off() {
+        let config = test_config();
+        let req = Request::builder().uri("/v1/listen").body(()).unwrap();
+        let options = ListenOptions::from_request(&req, &config);
+        assert!(!options.interim_results);
     }
 }

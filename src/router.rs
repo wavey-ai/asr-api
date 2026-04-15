@@ -170,26 +170,24 @@ impl Router for AppRouter {
         req: Request<()>,
         body: BodyStream,
     ) -> HandlerResult<HandlerResponse> {
-        if Self::is_listen_path(req.uri().path()) {
-            if let Some(listen) = &self.listen {
-                Ok(listen.handle_listen(req, body).await)
-            } else {
-                Ok(Self::not_found())
-            }
-        } else if Self::is_upload_path(req.uri().path()) {
+        if Self::is_upload_path(req.uri().path()) {
             if let Some(upload) = &self.upload {
                 upload.route_body(req, body).await
             } else {
                 Ok(Self::not_found())
             }
+        } else if Self::is_listen_path(req.uri().path()) {
+            let _ = body;
+            Err(ServerError::Config(
+                "listen requires streaming request/response handling".into(),
+            ))
         } else {
             Ok(Self::not_found())
         }
     }
 
     fn has_body_handler(&self, path: &str) -> bool {
-        (self.upload.is_some() && Self::is_upload_path(path))
-            || (self.listen.is_some() && Self::is_listen_path(path))
+        self.upload.is_some() && Self::is_upload_path(path)
     }
 
     fn has_body_stream_handler(&self, path: &str) -> bool {
