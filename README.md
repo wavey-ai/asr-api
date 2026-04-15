@@ -150,6 +150,8 @@ The worker image expects CUDA plus Python-installed PyTorch 2.7 at runtime so `t
 
 `upload-response` cache sizing matters on k8s because `ChunkCache` eagerly allocates its ring buffers. The baseline ingress config uses `16` streams, `32KB` slots, and `1024` slots per stream so the cache is sized for transcoded PCM rather than theoretical multi-GB uploads.
 
+Because ingress writes decoded PCM into `upload-response`, large uploads and long-lived streams are bounded by decoded audio size, not by the compressed input size. With the current normalized audio format (`mono`, `16 kHz`, `f32`), ingress stores about `62.5 KiB/s` of audio. At the baseline setting of `1024 * 32 KiB`, each request stream has about `32 MiB` of request-cache capacity, which is roughly `8.7 minutes` of decoded PCM before that stream's ring starts wrapping. If you need to tolerate longer uploads or slower worker drain, increase `UPLOAD_RESPONSE_SLOTS_PER_STREAM` first. For example, `2048` slots is about `17.5 minutes` per stream, and `4096` slots is about `35 minutes` per stream at the same audio format.
+
 The workflows also need a repo secret named `WAVEY_AI_GH_TOKEN` so Docker can fetch the private `asr-onnx`, `asr-torch`, and `soundkit` dependencies during image build, and so the cluster can authenticate to `ghcr.io` for private image pulls.
 
 See also:
