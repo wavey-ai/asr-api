@@ -10,7 +10,7 @@ use av_api::cached_audio::CachedMonoPcmWriter;
 use av_api::linear16::Linear16PcmStream;
 use bytes::Bytes;
 use futures_util::{stream::SplitSink, SinkExt, StreamExt};
-use http::{header::CONTENT_TYPE, HeaderName, HeaderValue, Request, StatusCode};
+use http::{header::CONTENT_TYPE, HeaderName, HeaderValue, Request, Response, StatusCode};
 use hyper::upgrade::Upgraded;
 use hyper_util::rt::TokioIo;
 use serde::Deserialize;
@@ -73,7 +73,7 @@ impl ListenIngress {
         &self,
         req: Request<()>,
         body: BodyStream,
-        stream_writer: Box<dyn StreamWriter>,
+        mut stream_writer: Box<dyn StreamWriter>,
     ) -> HandlerResult<()> {
         let request_id = ensure_request_id(req.headers());
         let method = req.method().clone();
@@ -89,11 +89,25 @@ impl ListenIngress {
         );
 
         async move {
-            reject_json_requests(&req).map_err(anyhow_to_server_error)?;
-            let capacity = self
-                .ensure_worker_capacity()
-                .await
-                .map_err(anyhow_to_server_error)?;
+            if let Err(error) = reject_json_requests(&req) {
+                write_stream_error(
+                    &mut *stream_writer,
+                    error_response(classify_error(&error), error.to_string()),
+                )
+                .await?;
+                return Ok(());
+            }
+            let capacity = match self.ensure_worker_capacity().await {
+                Ok(capacity) => capacity,
+                Err(error) => {
+                    write_stream_error(
+                        &mut *stream_writer,
+                        error_response(classify_error(&error), error.to_string()),
+                    )
+                    .await?;
+                    return Ok(());
+                }
+            };
             debug!(
                 workers = capacity.workers,
                 total_inflight = capacity.total_inflight,
@@ -358,8 +372,8 @@ impl ListenIngress {
             .service
             .worker_capacity_summary(Some(self.config.upload_response_worker_ttl_ms))
             .await;
-        if summary.total_available_slots == 0 {
-            anyhow::bail!("no live worker capacity available");
+        if summary.workers == 0 {
+            anyhow::bail!("no live workers available");
         }
         Ok(summary)
     }
@@ -732,7 +746,9 @@ fn classify_error(error: &anyhow::Error) -> StatusCode {
         || message.contains("audio bytes")
     {
         StatusCode::BAD_REQUEST
-    } else if message.contains("no live worker capacity") {
+    } else if message.contains("no live worker capacity")
+        || message.contains("no live workers available")
+    {
         StatusCode::SERVICE_UNAVAILABLE
     } else {
         StatusCode::INTERNAL_SERVER_ERROR
@@ -750,6 +766,28 @@ fn error_response(status: StatusCode, message: String) -> HandlerResponse {
         headers: vec![("cache-control".into(), "no-store".into())],
         etag: None,
     }
+}
+
+async fn write_stream_error(
+    stream_writer: &mut dyn StreamWriter,
+    handler_response: HandlerResponse,
+) -> HandlerResult<()> {
+    let mut response = Response::builder().status(handler_response.status);
+    if let Some(content_type) = handler_response.content_type {
+        response = response.header("content-type", content_type);
+    }
+    if let Some(etag) = handler_response.etag {
+        response = response.header("etag", etag.to_string());
+    }
+    for (key, value) in handler_response.headers {
+        response = response.header(&key, &value);
+    }
+
+    stream_writer.send_response(response.body(())?).await?;
+    if let Some(body) = handler_response.body {
+        stream_writer.send_data(body).await?;
+    }
+    stream_writer.finish().await
 }
 
 fn anyhow_to_server_error(error: anyhow::Error) -> ServerError {
