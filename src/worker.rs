@@ -5,34 +5,47 @@ use crate::deepgram::{
     append_word, build_response, default_model_info, ends_sentence, join_words,
     words_from_committed, ListenOptions, ModelInfo, Word,
 };
-use crate::ids::{ensure_request_id, next_request_id, request_id_from_headers};
+#[cfg(feature = "audio-decoder")]
+use crate::ids::ensure_request_id;
+use crate::ids::{next_request_id, request_id_from_headers};
 use crate::pcm::rms_level;
+use crate::processing::{decode_processing_head, decode_samples_f32le, DECODE_STAGE};
 use crate::protocol::{INTERNAL_STREAMING_MODE_HEADER, INTERNAL_STREAMING_MODE_JSONL};
 use anyhow::Result;
 use async_trait::async_trait;
-use av_api::cached_audio::decode_cached_f32le_chunk;
+#[cfg(feature = "audio-decoder")]
 use av_api::linear16::Linear16PcmStream;
 use bytes::Bytes;
+#[cfg(feature = "audio-decoder")]
 use futures_util::{SinkExt, StreamExt};
 use http::{header::CONTENT_TYPE, Request, StatusCode};
+#[cfg(feature = "audio-decoder")]
 use hyper::upgrade::Upgraded;
+#[cfg(feature = "audio-decoder")]
 use hyper_util::rt::TokioIo;
-use serde::{Deserialize, Serialize};
+#[cfg(feature = "audio-decoder")]
+use serde::Deserialize;
+use serde::Serialize;
 use sha2::{Digest, Sha256};
+#[cfg(feature = "audio-decoder")]
 use soundkit::audio_pipeline::audio_to_mono_f32;
+#[cfg(feature = "audio-decoder")]
 use soundkit_decoder::{DecodeOptions, DecodePipeline, DecodePipelineHandle};
 use std::collections::{BTreeMap, HashSet};
 use std::sync::Arc;
 use tokio::task::JoinSet;
 use tokio::time::{interval, Duration};
+#[cfg(feature = "audio-decoder")]
 use tokio_tungstenite::{tungstenite::Message, WebSocketStream};
 use tracing::{debug, error, info, info_span, trace, warn, Instrument};
 use upload_response::{
-    discover_ingress_origins, request_from_headers_slot, request_from_stream_headers,
-    RemoteIngressClient, RemoteRequestSlot, RequestControl, ResponseCacheWriter, TailSlot,
-    UploadResponseService, WorkerHeartbeatUpdate,
+    discover_ingress_origins, request_from_stream_headers, RemoteIngressClient, RemoteStageSlot,
+    RequestControl, ResponseCacheWriter, StageTailSlot, TailSlot, UploadResponseService,
+    WorkerHeartbeatUpdate,
 };
-use web_service::{BodyStream, HandlerResponse, HandlerResult, ServerError, WebSocketHandler};
+use web_service::HandlerResponse;
+#[cfg(feature = "audio-decoder")]
+use web_service::{BodyStream, HandlerResult, ServerError, WebSocketHandler};
 
 #[derive(Clone)]
 pub struct WorkerState {
@@ -56,6 +69,7 @@ const WS_SPEECH_RMS_THRESHOLD: f32 = 0.01;
 const WS_WORD_DEDUPE_EPSILON_MS: u64 = 25;
 
 #[derive(Clone)]
+#[cfg(feature = "audio-decoder")]
 pub struct ListenWebSocketHandler {
     worker: Arc<WorkerState>,
 }
@@ -75,6 +89,7 @@ struct JsonLineResponseWriter {
     finished: bool,
 }
 
+#[cfg(feature = "audio-decoder")]
 struct WebSocketJsonSink<'a> {
     stream: &'a mut WebSocketStream<TokioIo<Upgraded>>,
 }
@@ -88,6 +103,7 @@ struct WsTranscriptState {
     chunker: AudioChunker,
     committer: WordCommitter,
     pending_final_words: Vec<CommittedWord>,
+    fallback_fragments: Vec<String>,
     completed_transcript: String,
     total_samples: usize,
     next_seq: u32,
@@ -160,6 +176,7 @@ struct WsUtteranceEndEvent {
 }
 
 #[derive(Debug, Deserialize)]
+#[cfg(feature = "audio-decoder")]
 struct WsClientEvent {
     #[serde(rename = "type")]
     event_type: String,
@@ -185,6 +202,7 @@ impl WorkerState {
         })
     }
 
+    #[cfg(feature = "audio-decoder")]
     pub async fn handle_listen(&self, req: Request<()>, body: BodyStream) -> HandlerResponse {
         match self.handle_listen_inner(req, body).await {
             Ok(response) => response,
@@ -196,6 +214,7 @@ impl WorkerState {
         let max_inflight = self.config.upload_response_max_inflight;
         let inflight = inflight.min(max_inflight);
         WorkerHeartbeatUpdate {
+            stage: "response".to_string(),
             max_inflight,
             inflight,
             available_slots: max_inflight.saturating_sub(inflight),
@@ -237,6 +256,7 @@ impl WorkerState {
         }
     }
 
+    #[cfg(feature = "audio-decoder")]
     async fn handle_listen_websocket(
         &self,
         req: Request<()>,
@@ -328,7 +348,7 @@ impl WorkerState {
                                 let mut sink = WebSocketJsonSink {
                                     stream: &mut stream,
                                 };
-                                self.flush_streaming_session(&mut state, None, false, &mut sink)
+                                self.flush_streaming_session(&mut state, false, &mut sink)
                                     .await
                                     .map_err(anyhow_to_server_error)?;
                             }
@@ -336,9 +356,9 @@ impl WorkerState {
                                 let mut sink = WebSocketJsonSink {
                                     stream: &mut stream,
                                 };
-                                self.flush_streaming_session(
+                                self.flush_streaming_session_with_pcm(
                                     &mut state,
-                                    Some(&mut pcm_stream),
+                                    &mut pcm_stream,
                                     true,
                                     &mut sink,
                                 )
@@ -398,6 +418,10 @@ impl WorkerState {
                 .backend
                 .transcribe_window(window.samples, state.next_seq())
                 .await?;
+            if result.words.is_empty() {
+                state.push_fallback_fragment(result.text.trim());
+                continue;
+            }
             let committed = commit_absolute_words(
                 &mut state.committer,
                 window.start_sample,
@@ -415,25 +439,17 @@ impl WorkerState {
     async fn flush_streaming_session<S: JsonEventSink + Send>(
         &self,
         state: &mut WsTranscriptState,
-        pcm_stream: Option<&mut Linear16PcmStream>,
         close_stream: bool,
         sink: &mut S,
     ) -> Result<()> {
-        if let Some(pcm_stream) = pcm_stream {
-            let tail = pcm_stream
-                .finish()
-                .map_err(|error| anyhow::anyhow!(error.to_string()))?;
-            if !tail.is_empty() {
-                state.total_samples += tail.len();
-                state.chunker.push(&tail);
-            }
-        }
-
         if let Some(window) = state.chunker.take_final_window() {
             let result = self
                 .backend
                 .transcribe_window(window.samples, state.next_seq())
                 .await?;
+            if result.words.is_empty() {
+                state.push_fallback_fragment(result.text.trim());
+            } else {
             let committed = commit_absolute_words(
                 &mut state.committer,
                 window.start_sample,
@@ -443,14 +459,37 @@ impl WorkerState {
             );
             self.emit_streaming_committed(state, committed, false, sink)
                 .await?;
+            }
         }
 
         if let Some(segment) = state.take_pending_segment() {
             self.send_streaming_result(state, segment, true, close_stream, false, sink)
                 .await?;
+        } else if let Some(transcript) = state.take_fallback_transcript() {
+            self.send_streaming_text_result(state, &transcript, true, close_stream, false, sink)
+                .await?;
         }
 
         Ok(())
+    }
+
+    #[cfg(feature = "audio-decoder")]
+    async fn flush_streaming_session_with_pcm<S: JsonEventSink + Send>(
+        &self,
+        state: &mut WsTranscriptState,
+        pcm_stream: &mut Linear16PcmStream,
+        close_stream: bool,
+        sink: &mut S,
+    ) -> Result<()> {
+        let tail = pcm_stream
+            .finish()
+            .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+        if !tail.is_empty() {
+            state.total_samples += tail.len();
+            state.chunker.push(&tail);
+        }
+        self.flush_streaming_session(state, close_stream, sink)
+            .await
     }
 
     async fn emit_streaming_committed<S: JsonEventSink + Send>(
@@ -591,6 +630,44 @@ impl WorkerState {
         Ok(())
     }
 
+    async fn send_streaming_text_result<S: JsonEventSink + Send>(
+        &self,
+        state: &mut WsTranscriptState,
+        transcript: &str,
+        is_final: bool,
+        speech_final: bool,
+        from_finalize: bool,
+        sink: &mut S,
+    ) -> Result<()> {
+        let transcript = transcript.trim();
+        if transcript.is_empty() {
+            return Ok(());
+        }
+
+        if is_final {
+            state.append_completed_transcript(transcript);
+        }
+
+        let event = WsResultsEvent {
+            event_type: "Results",
+            channel_index: [0],
+            duration: state.total_duration_secs(),
+            start: 0.0,
+            is_final,
+            speech_final,
+            from_finalize,
+            channel: WsChannel {
+                alternatives: vec![WsAlternative {
+                    transcript: transcript.to_string(),
+                    confidence: 0.0,
+                    words: Vec::new(),
+                }],
+            },
+            metadata: state.results_metadata(),
+        };
+        send_json_event(sink, &event).await
+    }
+
     async fn run_cache_worker(self: Arc<Self>, service: Arc<UploadResponseService>) {
         info!(
             worker_id = %self.config.upload_response_worker_id,
@@ -646,7 +723,7 @@ impl WorkerState {
                     break;
                 }
                 if inflight.contains(&stream.stream_id)
-                    || stream.request_last == 0
+                    || stream.stage_last(DECODE_STAGE) == 0
                     || stream.response_owner.is_some()
                 {
                     continue;
@@ -804,7 +881,7 @@ impl WorkerState {
                     if inflight.len() >= self.config.upload_response_max_inflight {
                         break;
                     }
-                    if stream.request_last == 0 || stream.response_owner.is_some() {
+                    if stream.stage_last(DECODE_STAGE) == 0 || stream.response_owner.is_some() {
                         continue;
                     }
 
@@ -887,6 +964,7 @@ impl WorkerState {
         }
     }
 
+    #[cfg(feature = "audio-decoder")]
     async fn handle_listen_inner(
         &self,
         req: Request<()>,
@@ -1063,6 +1141,38 @@ impl WorkerState {
         }
     }
 
+    async fn validate_cached_processing_head(
+        &self,
+        service: &UploadResponseService,
+        stream_id: u64,
+    ) -> Result<()> {
+        match service.tail_stage(stream_id, DECODE_STAGE, 1).await {
+            Some(StageTailSlot::Head(bytes)) => {
+                let head = decode_processing_head(&bytes)?;
+                head.validate_for_asr()
+            }
+            Some(_) | None => Err(anyhow::anyhow!("processing head was missing")),
+        }
+    }
+
+    async fn validate_remote_processing_head(
+        &self,
+        client: &RemoteIngressClient,
+        origin: &str,
+        stream_id: u64,
+    ) -> Result<()> {
+        match client
+            .stage_slot(origin, stream_id, DECODE_STAGE, 1)
+            .await?
+        {
+            Some(RemoteStageSlot::Head(bytes)) => {
+                let head = decode_processing_head(&bytes)?;
+                head.validate_for_asr()
+            }
+            Some(_) | None => Err(anyhow::anyhow!("processing head was missing")),
+        }
+    }
+
     async fn stream_cached_upload(
         &self,
         service: Arc<UploadResponseService>,
@@ -1080,7 +1190,10 @@ impl WorkerState {
             .to_string();
         let mut state = WsTranscriptState::new(options, request_id.clone(), model_id, model_info);
         let mut received_bytes = 0usize;
-        let mut last_slot = 0usize;
+        let mut last_slot = 1usize;
+
+        self.validate_cached_processing_head(&service, stream_id)
+            .await?;
 
         let metadata = WsMetadataEvent {
             event_type: "Metadata",
@@ -1098,20 +1211,20 @@ impl WorkerState {
         'stream: loop {
             poll.tick().await;
             let current_last = service
-                .request_last(stream_id)
-                .ok_or_else(|| anyhow::anyhow!("request stream {stream_id} disappeared"))?;
+                .stage_last(stream_id, DECODE_STAGE)
+                .await
+                .ok_or_else(|| anyhow::anyhow!("processing stream {stream_id} disappeared"))?;
 
             if current_last <= last_slot {
                 continue;
             }
 
             for slot_id in (last_slot + 1)..=current_last {
-                match service.tail_request(stream_id, slot_id).await {
-                    Some(TailSlot::Headers(_)) => {}
-                    Some(TailSlot::Body(chunk)) => {
+                match service.tail_stage(stream_id, DECODE_STAGE, slot_id).await {
+                    Some(StageTailSlot::Head(_)) => {}
+                    Some(StageTailSlot::Body(chunk)) => {
                         received_bytes += chunk.len();
-                        let samples =
-                            decode_cached_f32le_chunk(&chunk).map_err(anyhow::Error::msg)?;
+                        let samples = decode_samples_f32le(&chunk)?;
                         if !state.speech_started_sent
                             && !samples.is_empty()
                             && rms_level(&samples) >= WS_SPEECH_RMS_THRESHOLD
@@ -1127,12 +1240,12 @@ impl WorkerState {
                         self.process_streaming_samples(&mut state, &samples, writer)
                             .await?;
                     }
-                    Some(TailSlot::Control(RequestControl::Finalize)) => {
-                        self.flush_streaming_session(&mut state, None, false, writer)
+                    Some(StageTailSlot::Control(RequestControl::Finalize)) => {
+                        self.flush_streaming_session(&mut state, false, writer)
                             .await?;
                     }
-                    Some(TailSlot::Control(RequestControl::KeepAlive)) => {}
-                    Some(TailSlot::End) => break 'stream,
+                    Some(StageTailSlot::Control(RequestControl::KeepAlive)) => {}
+                    Some(StageTailSlot::End) => break 'stream,
                     None => {}
                 }
             }
@@ -1145,7 +1258,7 @@ impl WorkerState {
             "request body did not include audio bytes"
         );
 
-        self.flush_streaming_session(&mut state, None, true, writer)
+        self.flush_streaming_session(&mut state, true, writer)
             .await?;
         info!(
             received_bytes,
@@ -1173,7 +1286,10 @@ impl WorkerState {
             .to_string();
         let mut state = WsTranscriptState::new(options, request_id.clone(), model_id, model_info);
         let mut received_bytes = 0usize;
-        let mut last_slot = 0usize;
+        let mut last_slot = 1usize;
+
+        self.validate_remote_processing_head(client, origin, stream_id)
+            .await?;
 
         let metadata = WsMetadataEvent {
             event_type: "Metadata",
@@ -1190,18 +1306,20 @@ impl WorkerState {
 
         'stream: loop {
             poll.tick().await;
-            let current_last = client.request_last(origin, stream_id).await?;
+            let current_last = client.stage_last(origin, stream_id, DECODE_STAGE).await?;
             if current_last <= last_slot {
                 continue;
             }
 
             for slot_id in (last_slot + 1)..=current_last {
-                match client.request_slot(origin, stream_id, slot_id).await? {
-                    Some(RemoteRequestSlot::Headers(_)) => {}
-                    Some(RemoteRequestSlot::Body(chunk)) => {
+                match client
+                    .stage_slot(origin, stream_id, DECODE_STAGE, slot_id)
+                    .await?
+                {
+                    Some(RemoteStageSlot::Head(_)) => {}
+                    Some(RemoteStageSlot::Body(chunk)) => {
                         received_bytes += chunk.len();
-                        let samples =
-                            decode_cached_f32le_chunk(&chunk).map_err(anyhow::Error::msg)?;
+                        let samples = decode_samples_f32le(&chunk)?;
                         if !state.speech_started_sent
                             && !samples.is_empty()
                             && rms_level(&samples) >= WS_SPEECH_RMS_THRESHOLD
@@ -1217,12 +1335,12 @@ impl WorkerState {
                         self.process_streaming_samples(&mut state, &samples, writer)
                             .await?;
                     }
-                    Some(RemoteRequestSlot::Control(RequestControl::Finalize)) => {
-                        self.flush_streaming_session(&mut state, None, false, writer)
+                    Some(RemoteStageSlot::Control(RequestControl::Finalize)) => {
+                        self.flush_streaming_session(&mut state, false, writer)
                             .await?;
                     }
-                    Some(RemoteRequestSlot::Control(RequestControl::KeepAlive)) => {}
-                    Some(RemoteRequestSlot::End) => break 'stream,
+                    Some(RemoteStageSlot::Control(RequestControl::KeepAlive)) => {}
+                    Some(RemoteStageSlot::End) => break 'stream,
                     None => {}
                 }
             }
@@ -1235,7 +1353,7 @@ impl WorkerState {
             "request body did not include audio bytes"
         );
 
-        self.flush_streaming_session(&mut state, None, true, writer)
+        self.flush_streaming_session(&mut state, true, writer)
             .await?;
         info!(
             origin,
@@ -1266,27 +1384,26 @@ impl WorkerState {
         let mut total_samples = 0usize;
         let mut received_bytes = 0usize;
         let mut hasher = Sha256::new();
-        let mut last_slot = 0usize;
-        let mut request = None;
+        let mut last_slot = 1usize;
+
+        self.validate_cached_processing_head(service, stream_id)
+            .await?;
 
         'stream: loop {
             poll.tick().await;
             let current_last = service
-                .request_last(stream_id)
-                .ok_or_else(|| anyhow::anyhow!("request stream {stream_id} disappeared"))?;
+                .stage_last(stream_id, DECODE_STAGE)
+                .await
+                .ok_or_else(|| anyhow::anyhow!("processing stream {stream_id} disappeared"))?;
 
             if current_last <= last_slot {
                 continue;
             }
 
             for slot_id in (last_slot + 1)..=current_last {
-                match service.tail_request(stream_id, slot_id).await {
-                    Some(TailSlot::Headers(headers)) => {
-                        let built = request_from_stream_headers(headers)?;
-                        reject_json_requests(&built)?;
-                        request = Some(built);
-                    }
-                    Some(TailSlot::Body(chunk)) => {
+                match service.tail_stage(stream_id, DECODE_STAGE, slot_id).await {
+                    Some(StageTailSlot::Head(_)) => {}
+                    Some(StageTailSlot::Body(chunk)) => {
                         received_bytes += chunk.len();
                         hasher.update(&chunk);
                         self.push_pcm_bytes(&chunk, &mut chunker, &mut total_samples)?;
@@ -1299,8 +1416,8 @@ impl WorkerState {
                         )
                         .await?;
                     }
-                    Some(TailSlot::Control(_)) => {}
-                    Some(TailSlot::End) => {
+                    Some(StageTailSlot::Control(_)) => {}
+                    Some(StageTailSlot::End) => {
                         break 'stream;
                     }
                     None => {}
@@ -1314,7 +1431,10 @@ impl WorkerState {
             received_bytes > 0,
             "request body did not include audio bytes"
         );
-        let request = request.ok_or_else(|| anyhow::anyhow!("request headers were missing"))?;
+        let request = self
+            .read_cached_request_headers(service, stream_id)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("request headers were missing"))?;
         self.process_ready_windows(
             &mut chunker,
             &mut committer,
@@ -1376,24 +1496,25 @@ impl WorkerState {
         let mut total_samples = 0usize;
         let mut received_bytes = 0usize;
         let mut hasher = Sha256::new();
-        let mut last_slot = 0usize;
-        let mut request = None;
+        let mut last_slot = 1usize;
+
+        self.validate_remote_processing_head(client, origin, stream_id)
+            .await?;
 
         'stream: loop {
             poll.tick().await;
-            let current_last = client.request_last(origin, stream_id).await?;
+            let current_last = client.stage_last(origin, stream_id, DECODE_STAGE).await?;
             if current_last <= last_slot {
                 continue;
             }
 
             for slot_id in (last_slot + 1)..=current_last {
-                match client.request_slot(origin, stream_id, slot_id).await? {
-                    Some(RemoteRequestSlot::Headers(bytes)) => {
-                        let built = request_from_headers_slot(&bytes)?;
-                        reject_json_requests(&built)?;
-                        request = Some(built);
-                    }
-                    Some(RemoteRequestSlot::Body(chunk)) => {
+                match client
+                    .stage_slot(origin, stream_id, DECODE_STAGE, slot_id)
+                    .await?
+                {
+                    Some(RemoteStageSlot::Head(_)) => {}
+                    Some(RemoteStageSlot::Body(chunk)) => {
                         received_bytes += chunk.len();
                         hasher.update(&chunk);
                         self.push_pcm_bytes(&chunk, &mut chunker, &mut total_samples)?;
@@ -1406,8 +1527,8 @@ impl WorkerState {
                         )
                         .await?;
                     }
-                    Some(RemoteRequestSlot::Control(_)) => {}
-                    Some(RemoteRequestSlot::End) => {
+                    Some(RemoteStageSlot::Control(_)) => {}
+                    Some(RemoteStageSlot::End) => {
                         break 'stream;
                     }
                     None => {}
@@ -1421,7 +1542,10 @@ impl WorkerState {
             received_bytes > 0,
             "request body did not include audio bytes"
         );
-        let request = request.ok_or_else(|| anyhow::anyhow!("request headers were missing"))?;
+        let request = client
+            .request_headers(origin, stream_id)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("request headers were missing"))?;
         self.process_ready_windows(
             &mut chunker,
             &mut committer,
@@ -1463,6 +1587,7 @@ impl WorkerState {
         Ok((request, prepared))
     }
 
+    #[cfg(feature = "audio-decoder")]
     async fn transcribe_upload(&self, mut body: BodyStream) -> Result<PreparedTranscript> {
         let mut decoder = Self::new_decoder();
         let mut chunker = AudioChunker::new(
@@ -1545,6 +1670,7 @@ impl WorkerState {
         Ok(prepared)
     }
 
+    #[cfg(feature = "audio-decoder")]
     fn new_decoder() -> DecodePipelineHandle {
         DecodePipeline::spawn_with_options(DecodeOptions {
             output_bits_per_sample: Some(16),
@@ -1553,6 +1679,7 @@ impl WorkerState {
         })
     }
 
+    #[cfg(feature = "audio-decoder")]
     async fn feed_decoder(
         &self,
         decoder: &mut DecodePipelineHandle,
@@ -1573,6 +1700,7 @@ impl WorkerState {
         self.drain_decoder(decoder, chunker, total_samples)
     }
 
+    #[cfg(feature = "audio-decoder")]
     async fn finish_decoder(
         &self,
         decoder: &mut DecodePipelineHandle,
@@ -1599,6 +1727,7 @@ impl WorkerState {
         Ok(())
     }
 
+    #[cfg(feature = "audio-decoder")]
     fn drain_decoder(
         &self,
         decoder: &mut DecodePipelineHandle,
@@ -1620,7 +1749,7 @@ impl WorkerState {
         chunker: &mut AudioChunker,
         total_samples: &mut usize,
     ) -> Result<()> {
-        let samples = decode_cached_f32le_chunk(chunk).map_err(anyhow::Error::msg)?;
+        let samples = decode_samples_f32le(chunk)?;
         *total_samples += samples.len();
         chunker.push(&samples);
         Ok(())
@@ -1700,6 +1829,7 @@ impl WorkerState {
     }
 }
 
+#[cfg(feature = "audio-decoder")]
 impl ListenWebSocketHandler {
     pub fn new(worker: Arc<WorkerState>) -> Self {
         Self { worker }
@@ -1707,6 +1837,7 @@ impl ListenWebSocketHandler {
 }
 
 #[async_trait]
+#[cfg(feature = "audio-decoder")]
 impl WebSocketHandler for ListenWebSocketHandler {
     async fn handle_websocket(
         &self,
@@ -1743,6 +1874,7 @@ impl WsTranscriptState {
             ),
             committer: WordCommitter::default(),
             pending_final_words: Vec::new(),
+            fallback_fragments: Vec::new(),
             completed_transcript: String::new(),
             total_samples: 0,
             next_seq: 0,
@@ -1797,6 +1929,29 @@ impl WsTranscriptState {
 
     fn take_pending_segment(&mut self) -> Option<Vec<CommittedWord>> {
         (!self.pending_final_words.is_empty()).then(|| self.pending_final_words.drain(..).collect())
+    }
+
+    fn push_fallback_fragment(&mut self, transcript: &str) {
+        let transcript = transcript.trim();
+        if transcript.is_empty() {
+            return;
+        }
+        if self
+            .fallback_fragments
+            .last()
+            .map(|last| last == transcript)
+            .unwrap_or(false)
+        {
+            return;
+        }
+        self.fallback_fragments.push(transcript.to_string());
+    }
+
+    fn take_fallback_transcript(&mut self) -> Option<String> {
+        if self.fallback_fragments.is_empty() {
+            return None;
+        }
+        Some(self.fallback_fragments.drain(..).collect::<Vec<_>>().join(" "))
     }
 
     fn append_completed_transcript(&mut self, transcript: &str) {
@@ -1880,11 +2035,13 @@ async fn send_json_event<S: JsonEventSink + Send, T: Serialize>(
     sink.send_json(payload).await
 }
 
+#[cfg(feature = "audio-decoder")]
 fn anyhow_to_server_error(error: anyhow::Error) -> ServerError {
     ServerError::Config(error.to_string())
 }
 
 #[async_trait]
+#[cfg(feature = "audio-decoder")]
 impl<'a> JsonEventSink for WebSocketJsonSink<'a> {
     async fn send_json(&mut self, json: String) -> Result<()> {
         self.stream
@@ -1962,6 +2119,7 @@ fn is_streaming_request(req: &Request<()>) -> bool {
         .unwrap_or(false)
 }
 
+#[cfg(feature = "audio-decoder")]
 fn reject_json_requests(req: &Request<()>) -> Result<()> {
     let is_json = req
         .headers()

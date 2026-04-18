@@ -1,0 +1,89 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: asr-api-decoder
+  namespace: asr-api
+  labels:
+    app.kubernetes.io/name: asr-api-decoder
+    app.kubernetes.io/component: decoder
+    app.kubernetes.io/part-of: asr-api
+spec:
+  replicas: 1
+  revisionHistoryLimit: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: asr-api-decoder
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: asr-api-decoder
+        app.kubernetes.io/component: decoder
+        app.kubernetes.io/part-of: asr-api
+    spec:
+      serviceAccountName: asr-api
+      imagePullSecrets:
+        - name: ghcr-wavey-ai
+      terminationGracePeriodSeconds: 120
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: nvidia.com/gpu.present
+                    operator: DoesNotExist
+      containers:
+        - name: decoder
+          image: ghcr.io/wavey-ai/asr-api-decoder:main
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: https
+              containerPort: 8443
+          envFrom:
+            - configMapRef:
+                name: asr-api-decoder-config
+            - secretRef:
+                name: asr-api-env
+                optional: true
+          env:
+            - name: TLS_CERT_PATH
+              value: /var/run/asr-api/tls/tls.crt
+            - name: TLS_KEY_PATH
+              value: /var/run/asr-api/tls/tls.key
+          volumeMounts:
+            - name: tls
+              mountPath: /var/run/asr-api/tls
+              readOnly: true
+          startupProbe:
+            httpGet:
+              scheme: HTTPS
+              path: /healthz
+              port: https
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 60
+          readinessProbe:
+            httpGet:
+              scheme: HTTPS
+              path: /healthz
+              port: https
+            periodSeconds: 5
+            timeoutSeconds: 5
+          livenessProbe:
+            httpGet:
+              scheme: HTTPS
+              path: /healthz
+              port: https
+            initialDelaySeconds: 30
+            periodSeconds: 15
+            timeoutSeconds: 5
+          resources:
+            requests:
+              cpu: "1"
+              memory: 1Gi
+            limits:
+              cpu: "4"
+              memory: 4Gi
+      volumes:
+        - name: tls
+          secret:
+            secretName: asr-api-tls

@@ -1,11 +1,16 @@
 #[cfg(feature = "gpu-backend")]
 pub mod asr;
 pub mod chunking;
+#[cfg(feature = "cohere-backend")]
+pub mod cohere;
 pub mod config;
+#[cfg(feature = "audio-decoder")]
+pub mod decoder;
 pub mod deepgram;
 pub mod ids;
 pub mod ingress;
 pub mod pcm;
+pub mod processing;
 pub mod protocol;
 pub mod router;
 #[cfg(feature = "gpu-backend")]
@@ -21,9 +26,11 @@ use web_service::{H2H3Server, Server, ServerBuilder};
 
 #[cfg(feature = "gpu-backend")]
 use crate::asr::AsrBackend;
-#[cfg(feature = "gpu-backend")]
+#[cfg(any(feature = "gpu-backend", feature = "audio-decoder"))]
 use crate::config::AppRole;
 use crate::config::{AppConfig, LogFormat};
+#[cfg(feature = "audio-decoder")]
+use crate::decoder::DecoderState;
 use crate::ingress::{ListenIngress, ListenIngressWebSocketHandler};
 use crate::router::AppRouter;
 #[cfg(feature = "gpu-backend")]
@@ -74,13 +81,32 @@ pub async fn run(config: AppConfig) -> Result<()> {
         );
     }
 
+    #[cfg(not(feature = "audio-decoder"))]
+    if config.role.uses_audio_decoder() {
+        anyhow::bail!(
+            "this asr-api build does not include the audio decoder; use the decoder image for role {:?}",
+            config.role
+        );
+    }
+
     let (cert_b64, key_b64) = config.tls_base64()?;
     let model_dir = if config.role.uses_asr_backend() {
         Some(config.model_dir()?.to_path_buf())
     } else {
         None
     };
-    let vocab_path = if config.role.uses_asr_backend() {
+    #[cfg(feature = "gpu-backend")]
+    let model_provider = if config.role.uses_asr_backend() {
+        Some(config.resolved_model_provider()?)
+    } else {
+        None
+    };
+    let vocab_path = if config.role.uses_asr_backend()
+        && config
+            .resolved_model_provider()
+            .map(|provider| matches!(provider, crate::config::AsrModelProvider::Nemo))
+            .unwrap_or(false)
+    {
         Some(config.resolve_vocab_path()?)
     } else {
         None
@@ -106,12 +132,12 @@ pub async fn run(config: AppConfig) -> Result<()> {
             model_dir
                 .as_ref()
                 .expect("model dir already validated for backend role"),
-            vocab_path
-                .as_ref()
-                .expect("vocab path already validated for backend role"),
+            vocab_path.as_deref(),
+            model_provider.expect("model provider already validated for backend role"),
             &config.device_ids,
             config.torch_sessions,
             config.onnx_sessions,
+            config.cohere_max_new_tokens,
         )?))
     } else {
         None
@@ -119,17 +145,38 @@ pub async fn run(config: AppConfig) -> Result<()> {
 
     #[cfg(feature = "gpu-backend")]
     let worker_state = backend.map(|backend| Arc::new(WorkerState::new(config.clone(), backend)));
+    #[cfg(feature = "audio-decoder")]
+    let decoder_state = if config.role.uses_audio_decoder() {
+        Some(Arc::new(DecoderState::new(config.clone())))
+    } else {
+        None
+    };
 
-    #[cfg(feature = "gpu-backend")]
-    let _worker_handle = match config.role {
-        AppRole::Worker => Some(
-            worker_state
-                .as_ref()
-                .expect("worker role must have worker state")
-                .clone()
-                .spawn_remote_cache_worker(),
-        ),
-        AppRole::Ingress => None,
+    #[cfg(any(feature = "gpu-backend", feature = "audio-decoder"))]
+    let _worker_handle = {
+        #[allow(unused_mut)]
+        let mut handle = None;
+        #[cfg(feature = "gpu-backend")]
+        if matches!(config.role, AppRole::Worker) {
+            handle = Some(
+                worker_state
+                    .as_ref()
+                    .expect("worker role must have worker state")
+                    .clone()
+                    .spawn_remote_cache_worker(),
+            );
+        }
+        #[cfg(feature = "audio-decoder")]
+        if matches!(config.role, AppRole::Decoder) {
+            handle = Some(
+                decoder_state
+                    .as_ref()
+                    .expect("decoder role must have decoder state")
+                    .clone()
+                    .spawn_remote_cache_worker(),
+            );
+        }
+        handle
     };
 
     let upload_router = upload_service
@@ -171,6 +218,7 @@ pub async fn run(config: AppConfig) -> Result<()> {
             .as_ref()
             .map(|path| path.display().to_string())
             .unwrap_or_else(|| "-".to_string()),
+        model_provider = %config.default_model_provider().default_model_name(),
         vocab_path = %vocab_path
             .as_ref()
             .map(|path| path.display().to_string())

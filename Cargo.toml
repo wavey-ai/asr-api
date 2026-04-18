@@ -4,13 +4,25 @@ version = "0.1.0"
 edition = "2021"
 
 [features]
-default = ["gpu-backend"]
-gpu-backend = ["dep:asr-onnx", "dep:asr-torch"]
+default = ["nemo-backend", "cohere-backend", "audio-decoder"]
+gpu-backend = []
+nemo-backend = [
+    "gpu-backend",
+    "dep:asr-onnx",
+    "dep:asr-torch",
+]
+cohere-backend = [
+    "gpu-backend",
+    "dep:ort",
+    "dep:rustfft",
+    "dep:tokenizers",
+]
+audio-decoder = ["dep:av-api", "dep:soundkit", "dep:soundkit-decoder"]
 
 [dependencies]
 anyhow = "1.0"
 async-trait = "0.1"
-av-api = { git = "https://github.com/wavey-ai/av-api.git" }
+av-api = { git = "https://github.com/wavey-ai/av-api.git", optional = true }
 asr-onnx = { git = "https://github.com/wavey-ai/asr-onnx.git", optional = true }
 asr-torch = { git = "https://github.com/wavey-ai/asr-torch.git", optional = true }
 bytes = "1"
@@ -26,13 +38,26 @@ http = "1"
 http-pack = { git = "https://github.com/wavey-ai/http-pack.git", default-features = false }
 ndarray = "0.17"
 reqwest = { version = "0.12", features = ["rustls-tls", "http2"] }
+ort = { git = "https://github.com/pykeio/ort.git", rev = "8724e89ff005ebef4339d7280ff592837404a98d", default-features = false, features = [
+    "std",
+    "ndarray",
+    "tracing",
+    "download-binaries",
+    "tls-native",
+    "copy-dylibs",
+    "api-24",
+    "tensorrt",
+    "cuda",
+], optional = true }
+rustfft = { version = "6.2", optional = true }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 sha2 = "0.10"
-soundkit = { git = "https://github.com/wavey-ai/soundkit.git", package = "soundkit" }
-soundkit-decoder = { git = "https://github.com/wavey-ai/soundkit.git", package = "soundkit-decoder" }
+soundkit = { git = "https://github.com/wavey-ai/soundkit.git", package = "soundkit", optional = true }
+soundkit-decoder = { git = "https://github.com/wavey-ai/soundkit.git", package = "soundkit-decoder", optional = true }
 tokio = { version = "1.45", features = ["full"] }
 tokio-tungstenite = { version = "0.27", features = ["rustls-tls-webpki-roots"] }
+tokenizers = { version = "0.22.2", default-features = false, features = ["onig"], optional = true }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "json"] }
 upload-response = { git = "https://github.com/wavey-ai/web-services.git", package = "upload-response" }

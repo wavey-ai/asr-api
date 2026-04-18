@@ -1,5 +1,5 @@
 use crate::chunking::CommittedWord;
-use crate::config::{AppConfig, DEFAULT_LANGUAGE, DEFAULT_MODEL_NAME};
+use crate::config::{AppConfig, DEFAULT_LANGUAGE};
 use chrono::{SecondsFormat, Utc};
 use http::Request;
 use serde::Serialize;
@@ -44,7 +44,7 @@ impl ListenOptions {
             endpointing_ms: None,
             utterance_split_secs: config.utt_split_seconds,
             language: DEFAULT_LANGUAGE.to_string(),
-            model: DEFAULT_MODEL_NAME.to_string(),
+            model: config.default_model_name().to_string(),
             encoding: None,
             sample_rate_hz: None,
             channels: 1,
@@ -266,12 +266,17 @@ pub struct UtteranceWord {
 pub fn default_model_info(model: &str) -> (String, BTreeMap<String, ModelInfo>) {
     let model_id = model.to_string();
     let mut model_info = BTreeMap::new();
+    let arch = if model.to_ascii_lowercase().contains("cohere") {
+        "cohere-transcribe-seq2seq"
+    } else {
+        "parakeet-tdt-onnx"
+    };
     model_info.insert(
         model_id.clone(),
         ModelInfo {
             name: model.to_string(),
             version: "local".into(),
-            arch: "parakeet-tdt-onnx".into(),
+            arch: arch.into(),
         },
     );
     (model_id, model_info)

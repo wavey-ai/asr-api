@@ -5,7 +5,9 @@ use upload_response::UploadResponseConfig;
 use web_service::{load_default_tls_base64, load_tls_base64_from_paths};
 
 pub const ASR_SAMPLE_RATE: u32 = 16_000;
-pub const DEFAULT_MODEL_NAME: &str = "wavey-parakeet-tdt-onnx";
+pub const DEFAULT_NEMO_MODEL_NAME: &str = "wavey-parakeet-tdt-onnx";
+pub const DEFAULT_COHERE_MODEL_NAME: &str = "wavey-cohere-transcribe-onnx";
+pub const DEFAULT_MODEL_NAME: &str = DEFAULT_NEMO_MODEL_NAME;
 pub const DEFAULT_LANGUAGE: &str = "en";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
@@ -18,12 +20,40 @@ pub enum LogFormat {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 pub enum AppRole {
     Ingress,
+    Decoder,
     Worker,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum AsrModelProvider {
+    Auto,
+    Nemo,
+    Cohere,
+}
+
+impl AsrModelProvider {
+    pub fn default_model_name(self) -> &'static str {
+        match self {
+            Self::Cohere => DEFAULT_COHERE_MODEL_NAME,
+            Self::Auto | Self::Nemo => DEFAULT_NEMO_MODEL_NAME,
+        }
+    }
+
+    pub fn default_model_arch(self) -> &'static str {
+        match self {
+            Self::Cohere => "cohere-transcribe-seq2seq",
+            Self::Auto | Self::Nemo => "parakeet-tdt-onnx",
+        }
+    }
 }
 
 impl AppRole {
     pub fn uses_asr_backend(self) -> bool {
         matches!(self, Self::Worker)
+    }
+
+    pub fn uses_audio_decoder(self) -> bool {
+        matches!(self, Self::Decoder)
     }
 
     pub fn serves_listen(self) -> bool {
@@ -69,6 +99,14 @@ pub struct AppConfig {
     pub vocab_path: Option<PathBuf>,
 
     #[arg(
+        long = "model-provider",
+        env = "ASR_MODEL_PROVIDER",
+        value_enum,
+        default_value_t = AsrModelProvider::Auto
+    )]
+    pub model_provider: AsrModelProvider,
+
+    #[arg(
         long,
         env = "ASR_DEVICE_IDS",
         value_delimiter = ',',
@@ -81,6 +119,9 @@ pub struct AppConfig {
 
     #[arg(long, env = "ASR_ONNX_SESSIONS", default_value_t = 1)]
     pub onnx_sessions: usize,
+
+    #[arg(long, env = "ASR_COHERE_MAX_NEW_TOKENS", default_value_t = 384)]
+    pub cohere_max_new_tokens: usize,
 
     #[arg(long, env = "CHUNK_SECONDS", default_value_t = 30.0)]
     pub chunk_seconds: f32,
@@ -208,6 +249,7 @@ impl AppConfig {
 
         if self.role.uses_asr_backend() {
             let model_dir = self.model_dir()?;
+            let provider = self.resolved_model_provider()?;
             anyhow::ensure!(
                 !self.device_ids.is_empty(),
                 "ASR_DEVICE_IDS must include at least one device id"
@@ -220,56 +262,83 @@ impl AppConfig {
                 self.onnx_sessions > 0,
                 "ASR_ONNX_SESSIONS must be greater than 0"
             );
+            anyhow::ensure!(
+                self.cohere_max_new_tokens > 0,
+                "ASR_COHERE_MAX_NEW_TOKENS must be greater than 0"
+            );
 
-            ensure_any_exists(
-                model_dir,
-                &["encoder.fp16.onnx", "encoder.onnx", "encoder.int8.onnx"],
-                "encoder",
-            )?;
-            ensure_any_exists(
-                model_dir,
-                &["decoder.fp16.onnx", "decoder.onnx", "decoder.int8.onnx"],
-                "decoder",
-            )?;
-            ensure_any_exists(
-                model_dir,
-                &[
-                    "joint.enc.fp16.onnx",
-                    "joint.enc.onnx",
-                    "joint.enc.int8.onnx",
-                ],
-                "joint.enc",
-            )?;
-            ensure_any_exists(
-                model_dir,
-                &[
-                    "joint.pred.fp16.onnx",
-                    "joint.pred.onnx",
-                    "joint.pred.int8.onnx",
-                ],
-                "joint.pred",
-            )?;
-            ensure_any_exists(
-                model_dir,
-                &[
-                    "joint.joint_net.fp16.onnx",
-                    "joint.joint_net.onnx",
-                    "joint.joint_net.int8.onnx",
-                ],
-                "joint.joint_net",
-            )?;
+            match provider {
+                AsrModelProvider::Nemo => {
+                    ensure_any_exists(
+                        model_dir,
+                        &["encoder.fp16.onnx", "encoder.onnx", "encoder.int8.onnx"],
+                        "encoder",
+                    )?;
+                    ensure_any_exists(
+                        model_dir,
+                        &["decoder.fp16.onnx", "decoder.onnx", "decoder.int8.onnx"],
+                        "decoder",
+                    )?;
+                    ensure_any_exists(
+                        model_dir,
+                        &[
+                            "joint.enc.fp16.onnx",
+                            "joint.enc.onnx",
+                            "joint.enc.int8.onnx",
+                        ],
+                        "joint.enc",
+                    )?;
+                    ensure_any_exists(
+                        model_dir,
+                        &[
+                            "joint.pred.fp16.onnx",
+                            "joint.pred.onnx",
+                            "joint.pred.int8.onnx",
+                        ],
+                        "joint.pred",
+                    )?;
+                    ensure_any_exists(
+                        model_dir,
+                        &[
+                            "joint.joint_net.fp16.onnx",
+                            "joint.joint_net.onnx",
+                            "joint.joint_net.int8.onnx",
+                        ],
+                        "joint.joint_net",
+                    )?;
 
-            let tokens_path = model_dir.join("tokens.txt");
-            if !tokens_path.is_file() {
-                let vocab_path = self.resolve_vocab_path()?;
-                anyhow::ensure!(
-                    vocab_path.is_file(),
-                    "ASR_VOCAB_PATH must point to a readable file when tokens.txt is absent"
-                );
+                    let tokens_path = model_dir.join("tokens.txt");
+                    if !tokens_path.is_file() {
+                        let vocab_path = self.resolve_vocab_path()?;
+                        anyhow::ensure!(
+                            vocab_path.is_file(),
+                            "ASR_VOCAB_PATH must point to a readable file when tokens.txt is absent"
+                        );
+                    }
+                }
+                AsrModelProvider::Cohere => {
+                    ensure_all_exists(
+                        model_dir,
+                        &[
+                            "encoder.onnx",
+                            "encoder.onnx.data",
+                            "decoder_prefill.onnx",
+                            "decoder_prefill.onnx.data",
+                            "decoder_cached_step.onnx",
+                            "decoder_cached_step.onnx.data",
+                            "tokenizer.json",
+                            "tokenizer.model",
+                            "config.json",
+                            "generation_config.json",
+                            "preprocessor_config.json",
+                        ],
+                    )?;
+                }
+                AsrModelProvider::Auto => unreachable!("model provider should resolve before validation"),
             }
         }
 
-        if matches!(self.role, AppRole::Worker) {
+        if matches!(self.role, AppRole::Decoder | AppRole::Worker) {
             anyhow::ensure!(
                 !self.upload_response_ingress_urls.is_empty()
                     || self
@@ -301,6 +370,46 @@ impl AppConfig {
             "model directory must contain tokens.txt or vocab.txt, or set ASR_VOCAB_PATH"
         );
         Ok(default_vocab)
+    }
+
+    pub fn configured_model_provider(&self) -> AsrModelProvider {
+        match self.model_provider {
+            AsrModelProvider::Auto => AsrModelProvider::Nemo,
+            provider => provider,
+        }
+    }
+
+    pub fn default_model_provider(&self) -> AsrModelProvider {
+        self.resolved_model_provider()
+            .unwrap_or_else(|_| self.configured_model_provider())
+    }
+
+    pub fn default_model_name(&self) -> &'static str {
+        self.default_model_provider().default_model_name()
+    }
+
+    pub fn default_model_arch(&self) -> &'static str {
+        self.default_model_provider().default_model_arch()
+    }
+
+    pub fn resolved_model_provider(&self) -> Result<AsrModelProvider> {
+        match self.model_provider {
+            AsrModelProvider::Auto => {
+                if !self.role.uses_asr_backend() {
+                    return Ok(AsrModelProvider::Nemo);
+                }
+
+                let model_dir = self.model_dir()?;
+                if model_dir.join("decoder_prefill.onnx").is_file()
+                    && model_dir.join("decoder_cached_step.onnx").is_file()
+                {
+                    Ok(AsrModelProvider::Cohere)
+                } else {
+                    Ok(AsrModelProvider::Nemo)
+                }
+            }
+            provider => Ok(provider),
+        }
     }
 
     pub fn model_dir(&self) -> Result<&Path> {
@@ -361,6 +470,23 @@ fn ensure_any_exists(model_dir: &Path, candidates: &[&str], label: &str) -> Resu
         "missing {label} model component in {} (checked: {})",
         model_dir.display(),
         candidates.join(", ")
+    )
+}
+
+fn ensure_all_exists(model_dir: &Path, required: &[&str]) -> Result<()> {
+    let missing = required
+        .iter()
+        .copied()
+        .filter(|name| !model_dir.join(name).is_file())
+        .collect::<Vec<_>>();
+    if missing.is_empty() {
+        return Ok(());
+    }
+
+    anyhow::bail!(
+        "missing required model files in {}: {}",
+        model_dir.display(),
+        missing.join(", ")
     )
 }
 

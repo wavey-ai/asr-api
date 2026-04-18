@@ -11,6 +11,7 @@ ASR_API_NAMESPACE="${ASR_API_NAMESPACE:-asr-api}"
 ASR_API_DOMAIN="${ASR_API_DOMAIN:-asr.wavey.ai}"
 ASR_API_KUSTOMIZE_PATH="${ASR_API_KUSTOMIZE_PATH:-deploy/k8s/asr-api}"
 ASR_API_INGRESS_IMAGE="${ASR_API_INGRESS_IMAGE:-ghcr.io/wavey-ai/asr-api-ingress:main}"
+ASR_API_DECODER_IMAGE="${ASR_API_DECODER_IMAGE:-ghcr.io/wavey-ai/asr-api-decoder:main}"
 ASR_API_WORKER_IMAGE="${ASR_API_WORKER_IMAGE:-ghcr.io/wavey-ai/asr-api-worker:main}"
 ASR_API_MODEL_PVC="${ASR_API_MODEL_PVC:-asr-api-model}"
 MODEL_TARBALL_URL="${MODEL_TARBALL_URL:-}"
@@ -147,10 +148,13 @@ fi
 
 kubectl apply -k "$ASR_API_KUSTOMIZE_PATH"
 kubectl -n "$ASR_API_NAMESPACE" set image deployment/asr-api-ingress ingress="$ASR_API_INGRESS_IMAGE"
+kubectl -n "$ASR_API_NAMESPACE" set image deployment/asr-api-decoder decoder="$ASR_API_DECODER_IMAGE"
 kubectl -n "$ASR_API_NAMESPACE" set image deployment/asr-api-worker worker="$ASR_API_WORKER_IMAGE"
 kubectl -n "$ASR_API_NAMESPACE" rollout restart deployment/asr-api-ingress
+kubectl -n "$ASR_API_NAMESPACE" rollout restart deployment/asr-api-decoder
 kubectl -n "$ASR_API_NAMESPACE" rollout restart deployment/asr-api-worker
 kubectl -n "$ASR_API_NAMESPACE" rollout status deployment/asr-api-ingress --timeout=20m
+kubectl -n "$ASR_API_NAMESPACE" rollout status deployment/asr-api-decoder --timeout=20m
 kubectl -n "$ASR_API_NAMESPACE" rollout status deployment/asr-api-worker --timeout=20m
 
 ingress_ip=""

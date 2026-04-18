@@ -20,7 +20,6 @@ RUN apt-get update \
       curl \
       libgomp1 \
       libcusparselt0-cuda-12 \
-      libopus0 \
       unzip \
     && rm -rf /var/lib/apt/lists/*
 

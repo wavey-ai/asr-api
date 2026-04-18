@@ -1,13 +1,10 @@
-use crate::config::{AppConfig, ASR_SAMPLE_RATE};
-use crate::deepgram::ListenOptions;
+use crate::config::AppConfig;
 use crate::ids::ensure_request_id;
 use crate::protocol::{
     INTERNAL_REQUEST_ID_HEADER, INTERNAL_STREAMING_MODE_HEADER, INTERNAL_STREAMING_MODE_JSONL,
 };
 use anyhow::Result;
 use async_trait::async_trait;
-use av_api::cached_audio::CachedMonoPcmWriter;
-use av_api::linear16::Linear16PcmStream;
 use bytes::Bytes;
 use futures_util::{stream::SplitSink, SinkExt, StreamExt};
 use http::{header::CONTENT_TYPE, HeaderName, HeaderValue, Request, Response, StatusCode};
@@ -15,7 +12,6 @@ use hyper::upgrade::Upgraded;
 use hyper_util::rt::TokioIo;
 use serde::Deserialize;
 use serde_json::json;
-use soundkit_decoder::{DecodeOptions, DecodePipeline, DecodePipelineHandle};
 use std::sync::Arc;
 use tokio::time::{interval, timeout, Duration};
 use tokio_tungstenite::{tungstenite::Message, WebSocketStream};
@@ -114,8 +110,6 @@ impl ListenIngress {
                 total_available_slots = capacity.total_available_slots,
                 "worker capacity accepted request"
             );
-            let options = ListenOptions::from_request(&req, &self.config);
-
             let guard = self
                 .cached
                 .open_streaming_request()
@@ -139,9 +133,7 @@ impl ListenIngress {
             let body_task = tokio::spawn(
                 async move {
                     let result: Result<()> = async {
-                        ingress
-                            .transcode_request_body(stream_id, body, &options)
-                            .await?;
+                        ingress.cached.copy_request_body(stream_id, body).await?;
                         ingress.cached.end_request(stream_id).await?;
                         Ok(())
                     }
@@ -202,12 +194,6 @@ impl ListenIngress {
                 total_available_slots = capacity.total_available_slots,
                 "worker capacity accepted websocket request"
             );
-            let options = ListenOptions::from_request(&req, &self.config);
-            let sample_rate = options.sample_rate_hz.unwrap_or(ASR_SAMPLE_RATE);
-            let channels = options.channels.max(1);
-            let mut pcm_stream = Linear16PcmStream::new(sample_rate, ASR_SAMPLE_RATE, channels)
-                .map_err(|error| ServerError::Config(error.to_string()))?;
-
             let upload_stream = self
                 .cached
                 .open_streaming_request()
@@ -219,7 +205,7 @@ impl ListenIngress {
             self.write_cached_request_headers(stream_id, &req, true, request_id)
                 .await
                 .map_err(anyhow_to_server_error)?;
-            info!(sample_rate, channels, "opened websocket listen request");
+            info!("opened websocket listen request");
 
             let (sink, mut source) = stream.split();
             let response_task = tokio::spawn(
@@ -236,17 +222,15 @@ impl ListenIngress {
             while let Some(frame) = source.next().await {
                 match frame {
                     Ok(Message::Binary(bytes)) => {
-                        let samples = match pcm_stream.push(&bytes) {
-                            Ok(samples) => samples,
-                            Err(error) => {
-                                let error = anyhow::anyhow!("raw linear16 decode failed: {error}");
-                                self.write_stream_error_response(stream_id, &error).await;
-                                let _ = self.service.end_request(stream_id).await;
-                                break;
-                            }
-                        };
-
-                        if let Err(error) = self.append_samples(stream_id, &samples).await {
+                        if let Err(error) = self
+                            .cached
+                            .append_request_body_sliced(
+                                stream_id,
+                                &bytes,
+                                self.config.upload_response_config().slot_bytes(),
+                            )
+                            .await
+                        {
                             self.write_stream_error_response(stream_id, &error).await;
                             let _ = self.service.end_request(stream_id).await;
                             break;
@@ -260,20 +244,18 @@ impl ListenIngress {
                         match event.event_type.as_str() {
                             "KeepAlive" => {
                                 let _ = self
-                                    .service
+                                    .cached
                                     .append_request_control(stream_id, RequestControl::KeepAlive)
                                     .await;
                             }
                             "Finalize" => {
                                 let _ = self
-                                    .service
+                                    .cached
                                     .append_request_control(stream_id, RequestControl::Finalize)
                                     .await;
                             }
                             "CloseStream" => {
-                                let _ = self
-                                    .finish_linear16_request(stream_id, &mut pcm_stream)
-                                    .await;
+                                let _ = self.service.end_request(stream_id).await;
                                 break;
                             }
                             _ => {}
@@ -284,9 +266,7 @@ impl ListenIngress {
                     }
                     Ok(Message::Pong(_)) => {}
                     Ok(Message::Close(_)) => {
-                        let _ = self
-                            .finish_linear16_request(stream_id, &mut pcm_stream)
-                            .await;
+                        let _ = self.service.end_request(stream_id).await;
                         break;
                     }
                     Ok(Message::Frame(_)) => {}
@@ -336,8 +316,6 @@ impl ListenIngress {
                 total_available_slots = capacity.total_available_slots,
                 "worker capacity accepted buffered request"
             );
-            let options = ListenOptions::from_request(&req, &self.config);
-
             let mut guard = self.cached.open_buffered_request().await?;
             let stream_id = guard.stream_id();
             tracing::Span::current().record("stream_id", field::display(stream_id));
@@ -346,8 +324,7 @@ impl ListenIngress {
                 self.write_cached_request_headers(stream_id, &req, false, request_id)
                     .await?;
 
-                self.transcode_request_body(stream_id, body, &options)
-                    .await?;
+                self.cached.copy_request_body(stream_id, body).await?;
                 self.cached.end_request(stream_id).await?;
 
                 let rx = guard.take_response_receiver().ok_or_else(|| {
@@ -368,13 +345,27 @@ impl ListenIngress {
     }
 
     async fn ensure_worker_capacity(&self) -> Result<WorkerCapacitySummary> {
-        let summary = self
+        let workers = self
             .service
-            .worker_capacity_summary(Some(self.config.upload_response_worker_ttl_ms))
+            .list_workers(Some(self.config.upload_response_worker_ttl_ms))
             .await;
-        if summary.workers == 0 {
-            anyhow::bail!("no live workers available");
-        }
+        let hinted_processing = workers
+            .iter()
+            .any(|worker| worker_role_hint(&worker.worker_id) == Some(WorkerRoleHint::Processing));
+        let hinted_response = workers
+            .iter()
+            .any(|worker| worker_role_hint(&worker.worker_id) == Some(WorkerRoleHint::Response));
+        let has_any_workers = !workers.is_empty();
+        let has_processing = hinted_processing || (!hinted_response && has_any_workers);
+        let has_response = hinted_response || (!hinted_processing && has_any_workers);
+        anyhow::ensure!(has_processing, "no live decoder workers available");
+        anyhow::ensure!(has_response, "no live response workers available");
+        let summary = WorkerCapacitySummary {
+            workers: workers.len(),
+            total_max_inflight: workers.iter().map(|worker| worker.max_inflight).sum(),
+            total_inflight: workers.iter().map(|worker| worker.inflight).sum(),
+            total_available_slots: workers.iter().map(|worker| worker.available_slots).sum(),
+        };
         Ok(summary)
     }
 
@@ -401,178 +392,6 @@ impl ListenIngress {
                 Ok(())
             })
             .await
-    }
-
-    async fn transcode_request_body(
-        &self,
-        stream_id: u64,
-        mut body: BodyStream,
-        options: &ListenOptions,
-    ) -> Result<()> {
-        debug!(
-            stream_id,
-            encoding = ?options.encoding,
-            sample_rate_hz = ?options.sample_rate_hz,
-            channels = options.channels,
-            "starting request body transcode"
-        );
-        if options.raw_linear16() {
-            return self
-                .transcode_linear16_request_body(stream_id, body, options)
-                .await;
-        }
-
-        let mut decoder = Self::new_decoder();
-        let mut received_bytes = 0usize;
-
-        while let Some(next) = body.next().await {
-            let chunk =
-                next.map_err(|error| anyhow::anyhow!("failed to read request body: {error}"))?;
-            if chunk.is_empty() {
-                continue;
-            }
-
-            received_bytes += chunk.len();
-            self.send_decoder_bytes(&mut decoder, chunk).await?;
-            self.flush_decoder(stream_id, &mut decoder, false).await?;
-        }
-
-        anyhow::ensure!(
-            received_bytes > 0,
-            "request body did not include audio bytes"
-        );
-
-        self.send_decoder_bytes(&mut decoder, Bytes::new()).await?;
-        self.flush_decoder(stream_id, &mut decoder, true).await?;
-        info!(stream_id, received_bytes, "request body transcoded");
-        Ok(())
-    }
-
-    async fn transcode_linear16_request_body(
-        &self,
-        stream_id: u64,
-        mut body: BodyStream,
-        options: &ListenOptions,
-    ) -> Result<()> {
-        let sample_rate = options
-            .sample_rate_hz
-            .ok_or_else(|| anyhow::anyhow!("sample_rate is required for encoding=linear16"))?;
-        let channels = options.channels.max(1);
-        let mut received_bytes = 0usize;
-        let mut pcm = Linear16PcmStream::new(sample_rate, ASR_SAMPLE_RATE, channels)
-            .map_err(|error| anyhow::anyhow!("{error}"))?;
-
-        while let Some(next) = body.next().await {
-            let chunk =
-                next.map_err(|error| anyhow::anyhow!("failed to read request body: {error}"))?;
-            if chunk.is_empty() {
-                continue;
-            }
-
-            received_bytes += chunk.len();
-            let samples = pcm
-                .push(&chunk)
-                .map_err(|error| anyhow::anyhow!("raw linear16 decode failed: {error}"))?;
-            self.append_samples(stream_id, &samples).await?;
-        }
-
-        anyhow::ensure!(
-            received_bytes > 0,
-            "request body did not include audio bytes"
-        );
-
-        let tail = pcm
-            .finish()
-            .map_err(|error| anyhow::anyhow!("raw linear16 decode failed: {error}"))?;
-        self.append_samples(stream_id, &tail).await?;
-        info!(
-            stream_id,
-            received_bytes,
-            sample_rate_hz = sample_rate,
-            channels,
-            "raw linear16 request transcoded"
-        );
-        Ok(())
-    }
-
-    async fn finish_linear16_request(
-        &self,
-        stream_id: u64,
-        pcm_stream: &mut Linear16PcmStream,
-    ) -> Result<()> {
-        let tail = pcm_stream
-            .finish()
-            .map_err(|error| anyhow::anyhow!("raw linear16 decode failed: {error}"))?;
-        self.append_samples(stream_id, &tail).await?;
-        self.service
-            .end_request(stream_id)
-            .await
-            .map_err(anyhow::Error::msg)
-    }
-
-    async fn send_decoder_bytes(
-        &self,
-        decoder: &mut DecodePipelineHandle,
-        data: Bytes,
-    ) -> Result<()> {
-        loop {
-            match decoder.send(data.clone()) {
-                Ok(()) => return Ok(()),
-                Err(soundkit_decoder::DecodeError::InputBufferFull) => {
-                    tokio::task::yield_now().await;
-                }
-                Err(error) => {
-                    return Err(anyhow::anyhow!("decoder send failed: {error}"));
-                }
-            }
-        }
-    }
-
-    async fn flush_decoder(
-        &self,
-        stream_id: u64,
-        decoder: &mut DecodePipelineHandle,
-        blocking: bool,
-    ) -> Result<()> {
-        if blocking {
-            while let Some(output) = decoder.recv() {
-                let audio = output.map_err(|error| anyhow::anyhow!("decode failed: {error}"))?;
-                self.append_audio(stream_id, &audio).await?;
-            }
-            return Ok(());
-        }
-
-        while let Some(output) = decoder.try_recv() {
-            let audio = output.map_err(|error| anyhow::anyhow!("decode failed: {error}"))?;
-            self.append_audio(stream_id, &audio).await?;
-        }
-        Ok(())
-    }
-
-    fn cached_pcm_writer(&self, stream_id: u64) -> CachedMonoPcmWriter {
-        CachedMonoPcmWriter::new(
-            self.service.clone(),
-            stream_id,
-            self.config.upload_response_config().slot_bytes().max(1),
-        )
-    }
-
-    async fn append_audio(
-        &self,
-        stream_id: u64,
-        audio: &soundkit::audio_types::AudioData,
-    ) -> Result<()> {
-        self.cached_pcm_writer(stream_id)
-            .append_audio(audio)
-            .await
-            .map_err(anyhow::Error::msg)
-    }
-
-    async fn append_samples(&self, stream_id: u64, samples: &[f32]) -> Result<()> {
-        self.cached_pcm_writer(stream_id)
-            .append_samples(samples)
-            .await
-            .map_err(anyhow::Error::msg)
     }
 
     async fn proxy_websocket_response(
@@ -666,14 +485,6 @@ impl ListenIngress {
             )
             .await;
     }
-
-    fn new_decoder() -> DecodePipelineHandle {
-        DecodePipeline::spawn_with_options(DecodeOptions {
-            output_bits_per_sample: Some(16),
-            output_sample_rate: Some(ASR_SAMPLE_RATE),
-            output_channels: Some(1),
-        })
-    }
 }
 
 impl ListenIngressWebSocketHandler {
@@ -717,6 +528,24 @@ fn trim_newline(bytes: &[u8]) -> &[u8] {
     bytes.strip_suffix(b"\r").unwrap_or(bytes)
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum WorkerRoleHint {
+    Processing,
+    Response,
+}
+
+fn worker_role_hint(worker_id: &str) -> Option<WorkerRoleHint> {
+    let worker_id = worker_id.trim().to_ascii_lowercase();
+    if worker_id.contains("decode") || worker_id.contains("decoder") {
+        return Some(WorkerRoleHint::Processing);
+    }
+    if worker_id.contains("response") || worker_id.contains("gpu") || worker_id.contains("worker")
+    {
+        return Some(WorkerRoleHint::Response);
+    }
+    None
+}
+
 fn reject_json_requests(req: &Request<()>) -> Result<()> {
     let is_json = req
         .headers()
@@ -748,6 +577,8 @@ fn classify_error(error: &anyhow::Error) -> StatusCode {
         StatusCode::BAD_REQUEST
     } else if message.contains("no live worker capacity")
         || message.contains("no live workers available")
+        || message.contains("no live decoder workers available")
+        || message.contains("no live response workers available")
     {
         StatusCode::SERVICE_UNAVAILABLE
     } else {

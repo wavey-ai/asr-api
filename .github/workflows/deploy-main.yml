@@ -21,6 +21,7 @@ env:
   ASR_API_DOMAIN: asr.wavey.ai
   ASR_API_REGISTRY: ghcr.io
   ASR_API_INGRESS_IMAGE_REPO: ghcr.io/wavey-ai/asr-api-ingress
+  ASR_API_DECODER_IMAGE_REPO: ghcr.io/wavey-ai/asr-api-decoder
   ASR_API_WORKER_IMAGE_REPO: ghcr.io/wavey-ai/asr-api-worker
   ASR_API_KUSTOMIZE_PATH: deploy/k8s/asr-api
   ASR_API_MODEL_PVC: asr-api-model
@@ -192,10 +193,12 @@ jobs:
           set -euo pipefail
 
           asr_api_ingress_image="${ASR_API_INGRESS_IMAGE_REPO}:main"
+          asr_api_decoder_image="${ASR_API_DECODER_IMAGE_REPO}:main"
           asr_api_worker_image="${ASR_API_WORKER_IMAGE_REPO}:main"
           if [ "${{ steps.changes.outputs.wait_image }}" = "true" ]; then
             short_sha="${GITHUB_SHA::7}"
             asr_api_ingress_image="${ASR_API_INGRESS_IMAGE_REPO}:sha-${short_sha}"
+            asr_api_decoder_image="${ASR_API_DECODER_IMAGE_REPO}:sha-${short_sha}"
             asr_api_worker_image="${ASR_API_WORKER_IMAGE_REPO}:sha-${short_sha}"
           fi
 
@@ -272,6 +275,7 @@ jobs:
           gpu_nodes="$(kubectl get nodes -l node.kubernetes.io/instance-type=g2-gpu-rtx4000a1-s -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}')"
 
           wait_for_image "$asr_api_ingress_image"
+          wait_for_image "$asr_api_decoder_image"
           wait_for_image "$asr_api_worker_image"
 
           i=0
@@ -280,6 +284,7 @@ jobs:
             pod_name="asr-api-ingress-loader-${i}"
             create_loader "$pod_name" "$node" "$ASR_API_NAMESPACE"
             load_image "$asr_api_ingress_image" "$pod_name" "$ASR_API_NAMESPACE"
+            load_image "$asr_api_decoder_image" "$pod_name" "$ASR_API_NAMESPACE"
             i=$((i + 1))
           done <<<"$ingress_nodes"
 
@@ -293,6 +298,7 @@ jobs:
           done <<<"$gpu_nodes"
 
           ASR_API_INGRESS_IMAGE="$asr_api_ingress_image" \
+          ASR_API_DECODER_IMAGE="$asr_api_decoder_image" \
           ASR_API_WORKER_IMAGE="$asr_api_worker_image" \
           bash deploy/lke/manual-deploy.sh
 

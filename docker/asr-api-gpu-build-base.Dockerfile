@@ -19,7 +19,6 @@ RUN apt-get update \
       git \
       libgomp1 \
       libprotobuf-dev \
-      libopus-dev \
       libssl-dev \
       ninja-build \
       pkg-config \
@@ -27,6 +26,10 @@ RUN apt-get update \
       unzip \
       zlib1g-dev \
     && rm -rf /var/lib/apt/lists/*
+
+RUN curl -fsSL https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain 1.88.0
+
+ENV PATH=/root/.cargo/bin:/usr/local/bin:${PATH}
 
 COPY --from=runtime-base /opt/libtorch /opt/libtorch
 COPY --from=runtime-base /opt/onnxruntime /opt/onnxruntime
@@ -39,5 +42,6 @@ ENV ORT_SKIP_DOWNLOAD=1
 ENV ORT_PREFER_DYNAMIC_LINK=1
 ENV ASR_ONNX_RUNTIME_LIB=/opt/onnxruntime/lib/libonnxruntime.so
 ENV ORT_DYLIB_PATH=/opt/onnxruntime/lib/libonnxruntime.so
+ENV ORT_CUDA_VERSION=12
 ENV PKG_CONFIG_PATH=/usr/lib/x86_64-linux-gnu/pkgconfig:/usr/local/lib/pkgconfig
 ENV LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu/libcusparseLt/12:/opt/libtorch/lib:/opt/onnxruntime/lib:/usr/lib/x86_64-linux-gnu:/usr/local/cuda/lib64:/usr/local/cuda/targets/x86_64-linux/lib:/usr/local/lib

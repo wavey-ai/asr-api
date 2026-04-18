@@ -1,4 +1,4 @@
-use crate::config::{AppConfig, DEFAULT_MODEL_NAME};
+use crate::config::AppConfig;
 use crate::ingress::{ListenIngress, ListenIngressWebSocketHandler};
 use async_trait::async_trait;
 use bytes::Bytes;
@@ -46,7 +46,8 @@ impl AppRouter {
     async fn handle_status(&self) -> HandlerResult<HandlerResponse> {
         let body = format!(
             "{{\"status\":\"ok\",\"service\":\"asr-api\",\"role\":\"{:?}\",\"model_name\":\"{}\"}}",
-            self.config.role, DEFAULT_MODEL_NAME
+            self.config.role,
+            self.config.default_model_name()
         );
         Ok(HandlerResponse {
             status: StatusCode::OK,
@@ -62,7 +63,7 @@ impl AppRouter {
             status: StatusCode::OK,
             body: Some(Bytes::from(format!(
                 "{{\"model_name\":\"{}\"}}",
-                DEFAULT_MODEL_NAME
+                self.config.default_model_name()
             ))),
             content_type: Some("application/json".into()),
             headers: vec![("cache-control".into(), "no-store".into())],
@@ -97,7 +98,9 @@ impl AppRouter {
             status: StatusCode::OK,
             body: Some(Bytes::from(format!(
                 "{{\"sha\":\"{}\",\"device_id\":{},\"model\":\"{}\"}}",
-                sha, device_id, DEFAULT_MODEL_NAME
+                sha,
+                device_id,
+                self.config.default_model_name()
             ))),
             content_type: Some("application/json".into()),
             headers: vec![("cache-control".into(), "no-store".into())],

@@ -2,16 +2,18 @@
 
 `asr-api` serves Deepgram-style prerecorded transcription over Wavey's `web-service` stack.
 
-It now supports two runtime roles:
+It now supports three runtime roles:
 
-1. `ingress`: CPU-oriented front door. It accepts `POST /v1/listen`, decodes supported audio through `soundkit-decoder`, normalizes to mono 16 kHz PCM, writes those PCM chunks into `upload-response`, and waits for a worker response.
-2. `worker`: GPU-oriented worker. It discovers ingress pods over the internal cache API, claims cached streams, runs `asr-torch` featurization plus `asr-onnx` decoding, then writes the final Deepgram-compatible JSON response back to the owning ingress pod.
+1. `ingress`: CPU-oriented front door. It accepts `POST /v1/listen`, writes raw request bytes plus request metadata into `upload-response`, and waits for a worker response.
+2. `decoder`: CPU-oriented processing stage. It discovers ingress pods over the internal cache API, claims raw request streams, decodes / normalizes them to mono `16 kHz` `f32`, and writes that canonical PCM into the `decoded` stage lane.
+3. `worker`: GPU-oriented response stage. It discovers ingress pods over the internal cache API, claims decoded streams, runs `asr-torch` featurization plus `asr-onnx` decoding, then writes the final Deepgram-compatible JSON response back to the owning ingress pod.
 
 The split is deliberate:
 
-- audio decode / resample / downmix stays on CPU ingress nodes
+- ingress is only HTTP / WebSocket / cache ingress; it does not carry audio decode libraries
+- audio decode / resample / downmix stays in a separate CPU decoder role
 - featurization stays with transcription on GPU nodes because `asr-torch` is CUDA-backed
-- the shared handoff stays on `upload-response`; there is no Redis sidecar or external queue in this first split
+- the shared handoff stays on `upload-response`; there is no Redis sidecar or external queue in this split
 
 ## Environment
 
@@ -26,7 +28,7 @@ The split is deliberate:
 - `ASR_DEVICE_IDS`: comma-separated GPU ids, default `0`
 - `ASR_TORCH_SESSIONS`: featurizer sessions per device, default `1`
 - `ASR_ONNX_SESSIONS`: decoder sessions per device, default `1`
-- `ASR_API_ROLE`: `ingress` or `worker`
+- `ASR_API_ROLE`: `ingress`, `decoder`, or `worker`
 - `ASR_LOG_FORMAT`: `json`, `pretty`, or `compact`, default `json`
 - `PORT`: TLS port, default `8443`
 - `ENABLE_H3`: enable HTTP/3 in addition to HTTP/2
@@ -48,7 +50,18 @@ The split is deliberate:
 - `UPLOAD_RESPONSE_DISCOVERY_INTERVAL_MS`: ingress discovery refresh interval, default `2000`
 - `UPLOAD_RESPONSE_INSECURE_TLS`: allow self-signed / internal TLS for worker mode
 
-`ASR_MODEL_DIR` is only required for `worker`. Pure `ingress` mode does not load the model.
+`ASR_MODEL_DIR` is only required for `worker`. `ingress` and `decoder` mode do not load the model.
+
+The repo no longer checks model payloads into Git. Sync them from the Wavey
+bucket before starting a worker:
+
+```bash
+AWS_ACCESS_KEY_ID=... \
+AWS_SECRET_ACCESS_KEY=... \
+scripts/sync-model-from-bucket.sh \
+  --model parakeet-tdt-0.6b-v3 \
+  --dest /var/lib/asr-api/models/parakeet-tdt
+```
 
 Correlation IDs use Wavey's snowflake generator and are propagated internally in `x-wavey-request-id`. If the client supplies a numeric `x-request-id`, `asr-api` will reuse it; otherwise ingress will mint one and carry it through the request path.
 
@@ -76,6 +89,12 @@ cargo run -- \
 
 ```bash
 cargo run -- --role ingress
+```
+
+```bash
+cargo run -- --role decoder \
+  --upload-response-ingress-urls https://127.0.0.1:8443 \
+  --upload-response-insecure-tls
 ```
 
 ## Request
@@ -107,10 +126,18 @@ Ingress serves the `upload-response` cache API for inspection and worker handoff
 - `GET /_upload_response/streams/{stream_id}`
 - `GET /_upload_response/streams/{stream_id}/request/last`
 - `GET /_upload_response/streams/{stream_id}/request/slots/{slot_id}`
+- `GET /_upload_response/streams/{stream_id}/stages/{stage}/last`
+- `GET /_upload_response/streams/{stream_id}/stages/{stage}/slots/{slot_id}`
 - `GET /_upload_response/streams/{stream_id}/response/last`
 - `GET /_upload_response/streams/{stream_id}/response/slots/{slot_id}`
 - `PUT /_upload_response/streams/{stream_id}/readers/{worker_id}`
 - `DELETE /_upload_response/streams/{stream_id}/readers/{worker_id}`
+- `PUT /_upload_response/streams/{stream_id}/stages/{stage}/claim/{worker_id}`
+- `DELETE /_upload_response/streams/{stream_id}/stages/{stage}/claim/{worker_id}`
+- `PUT /_upload_response/streams/{stream_id}/stages/{stage}/head`
+- `PUT /_upload_response/streams/{stream_id}/stages/{stage}/body`
+- `PUT /_upload_response/streams/{stream_id}/stages/{stage}/control`
+- `PUT /_upload_response/streams/{stream_id}/stages/{stage}/end`
 - `PUT /_upload_response/streams/{stream_id}/response/claim/{worker_id}`
 - `DELETE /_upload_response/streams/{stream_id}/response/claim/{worker_id}`
 - `PUT /_upload_response/streams/{stream_id}/response/headers`
@@ -137,20 +164,23 @@ PY
 The checked-in Kubernetes shape is now split:
 
 - CPU ingress deployment: `deploy/k8s/asr-api/ingress-deployment.yaml`
+- CPU decoder deployment: `deploy/k8s/asr-api/decoder-deployment.yaml`
 - GPU worker deployment: `deploy/k8s/asr-api/worker-deployment.yaml`
 - public service + headless discovery service: `deploy/k8s/asr-api/services.yaml`
-- baseline image build: `docker/asr-api.Dockerfile`
+- ingress image build: `docker/asr-api-ingress.Dockerfile`
+- decoder image build: `docker/asr-api-decoder.Dockerfile`
+- worker image build: `docker/asr-api.Dockerfile`
 - fallback source-build image: `docker/asr-api-source.Dockerfile`
 - TensorRT worker image: `docker/asr-api-trt.Dockerfile`
 - TensorRT overlay: `deploy/k8s/asr-api-trt/`
 - image workflow: `.github/workflows/build-image.yml`
 - deploy workflow: `.github/workflows/deploy-main.yml`
 
-The worker image expects CUDA plus Python-installed PyTorch 2.7 at runtime so `tch` can load the traced featurizer modules. The checked-in worker ConfigMap leaves TensorRT disabled (`ASR_ONNX_TRT_COMPONENTS=none`) for the baseline CUDA deployment. The separate `deploy/k8s/asr-api-trt/` overlay enables `encoder,joint_enc`, mounts a TRT engine-cache directory, and points the worker at the TRT-specific image tag.
+The ingress image is intentionally lean and does not include `libopus` or the decoder stack. Decoder-specific libraries live only in the decoder image, and GPU runtime libraries live only in the worker image. The checked-in worker ConfigMap leaves TensorRT disabled (`ASR_ONNX_TRT_COMPONENTS=none`) for the baseline CUDA deployment. The separate `deploy/k8s/asr-api-trt/` overlay enables `encoder,joint_enc`, mounts a TRT engine-cache directory, and points the worker at the TRT-specific image tag.
 
-`upload-response` cache sizing matters on k8s because `ChunkCache` eagerly allocates its ring buffers. The baseline ingress config uses `16` streams, `32KB` slots, and `1024` slots per stream so the cache is sized for transcoded PCM rather than theoretical multi-GB uploads.
+`upload-response` cache sizing matters on k8s because `ChunkCache` eagerly allocates its ring buffers. The baseline config uses `16` streams, `32KB` slots, and `1024` slots per stream for the request ring, the `decoded` stage lane, and the response ring.
 
-Because ingress writes decoded PCM into `upload-response`, large uploads and long-lived streams are bounded by decoded audio size, not by the compressed input size. With the current normalized audio format (`mono`, `16 kHz`, `f32`), ingress stores about `62.5 KiB/s` of audio. At the baseline setting of `1024 * 32 KiB`, each request stream has about `32 MiB` of request-cache capacity, which is roughly `8.7 minutes` of decoded PCM before that stream's ring starts wrapping. If you need to tolerate longer uploads or slower worker drain, increase `UPLOAD_RESPONSE_SLOTS_PER_STREAM` first. For example, `2048` slots is about `17.5 minutes` per stream, and `4096` slots is about `35 minutes` per stream at the same audio format.
+Ingress now stores raw upload bytes in the request ring, so request-ring pressure depends on the input codec and bitrate. The decoder stage writes canonical PCM into the `decoded` stage lane. With the current normalized audio format (`mono`, `16 kHz`, `f32`), that stage stores about `62.5 KiB/s` of audio. At the baseline setting of `1024 * 32 KiB`, each stream has about `32 MiB` of decoded-stage capacity, which is roughly `8.7 minutes` of decoded PCM before that lane starts wrapping. If you need to tolerate longer uploads or slower worker drain, increase `UPLOAD_RESPONSE_SLOTS_PER_STREAM` first. For example, `2048` slots is about `17.5 minutes` per stream, and `4096` slots is about `35 minutes` per stream at the same normalized audio format.
 
 The workflows also need a repo secret named `WAVEY_AI_GH_TOKEN` so Docker can fetch the private `asr-onnx`, `asr-torch`, and `soundkit` dependencies during image build, and so the cluster can authenticate to `ghcr.io` for private image pulls.
 

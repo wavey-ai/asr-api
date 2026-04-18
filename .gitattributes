@@ -1,6 +1,0 @@
-models/**/*.onnx filter=lfs diff=lfs merge=lfs -text
-models/**/*.onnx.data filter=lfs diff=lfs merge=lfs -text
-models/**/*.pt filter=lfs diff=lfs merge=lfs -text
-models/cohere-transcribe-03-2026/* filter=lfs diff=lfs merge=lfs -text
-models/cohere-transcribe-03-2026/SHA256SUMS -filter -diff -merge text
-models/cohere-transcribe-03-2026/export.json -filter -diff -merge text

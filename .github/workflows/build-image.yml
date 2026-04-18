@@ -70,6 +70,147 @@ jobs:
             type=gha,scope=asr-api-cpu-base,mode=max
             type=registry,ref=ghcr.io/wavey-ai/asr-api-cpu-base:buildcache,mode=max
 
+  build-cpu-build-base:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+        with:
+          install: true
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/wavey-ai/asr-api-cpu-build-base
+          tags: |
+            type=raw,value=main,enable={{is_default_branch}}
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=sha,prefix=sha-
+
+      - name: Build and push cpu-build-base image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/asr-api-cpu-build-base.Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: |
+            type=gha,scope=asr-api-cpu-build-base
+            type=registry,ref=ghcr.io/wavey-ai/asr-api-cpu-build-base:buildcache
+          cache-to: |
+            type=gha,scope=asr-api-cpu-build-base,mode=max
+            type=registry,ref=ghcr.io/wavey-ai/asr-api-cpu-build-base:buildcache,mode=max
+
+  build-decoder-runtime-base:
+    needs: build-cpu-base
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+        with:
+          install: true
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/wavey-ai/asr-api-decoder-runtime-base
+          tags: |
+            type=raw,value=main,enable={{is_default_branch}}
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=sha,prefix=sha-
+
+      - name: Build and push decoder-runtime-base image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/asr-api-decoder-runtime-base.Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            CPU_RUNTIME_BASE_IMAGE=ghcr.io/wavey-ai/asr-api-cpu-base:sha-${{ github.sha }}
+          cache-from: |
+            type=gha,scope=asr-api-decoder-runtime-base
+            type=registry,ref=ghcr.io/wavey-ai/asr-api-decoder-runtime-base:buildcache
+          cache-to: |
+            type=gha,scope=asr-api-decoder-runtime-base,mode=max
+            type=registry,ref=ghcr.io/wavey-ai/asr-api-decoder-runtime-base:buildcache,mode=max
+
+  build-decoder-build-base:
+    needs: build-cpu-build-base
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+        with:
+          install: true
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/wavey-ai/asr-api-decoder-build-base
+          tags: |
+            type=raw,value=main,enable={{is_default_branch}}
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=sha,prefix=sha-
+
+      - name: Build and push decoder-build-base image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/asr-api-decoder-build-base.Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            CPU_BUILD_BASE_IMAGE=ghcr.io/wavey-ai/asr-api-cpu-build-base:sha-${{ github.sha }}
+          cache-from: |
+            type=gha,scope=asr-api-decoder-build-base
+            type=registry,ref=ghcr.io/wavey-ai/asr-api-decoder-build-base:buildcache
+          cache-to: |
+            type=gha,scope=asr-api-decoder-build-base,mode=max
+            type=registry,ref=ghcr.io/wavey-ai/asr-api-decoder-build-base:buildcache,mode=max
+
   build-gpu-runtime-base:
     runs-on: ubuntu-24.04
     timeout-minutes: 60
@@ -188,7 +329,9 @@ jobs:
             type=registry,ref=ghcr.io/wavey-ai/asr-api-gpu-build-base:buildcache,mode=max
 
   build-ingress-image:
-    needs: build-cpu-base
+    needs:
+      - build-cpu-base
+      - build-cpu-build-base
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
@@ -227,6 +370,7 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           build-args: |
+            CPU_BUILD_BASE_IMAGE=ghcr.io/wavey-ai/asr-api-cpu-build-base:sha-${{ github.sha }}
             CPU_RUNTIME_BASE_IMAGE=ghcr.io/wavey-ai/asr-api-cpu-base:sha-${{ github.sha }}
           cache-from: |
             type=gha,scope=asr-api-ingress
@@ -234,6 +378,59 @@ jobs:
           cache-to: |
             type=gha,scope=asr-api-ingress,mode=max
             type=registry,ref=ghcr.io/wavey-ai/asr-api-ingress:buildcache,mode=max
+          secrets: |
+            github_token=${{ secrets.WAVEY_AI_GH_TOKEN }}
+
+  build-decoder-image:
+    needs:
+      - build-decoder-runtime-base
+      - build-decoder-build-base
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+        with:
+          install: true
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/wavey-ai/asr-api-decoder
+          tags: |
+            type=raw,value=main,enable={{is_default_branch}}
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=sha,prefix=sha-
+
+      - name: Build and push decoder image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/asr-api-decoder.Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            DECODER_BUILD_BASE_IMAGE=ghcr.io/wavey-ai/asr-api-decoder-build-base:sha-${{ github.sha }}
+            DECODER_RUNTIME_BASE_IMAGE=ghcr.io/wavey-ai/asr-api-decoder-runtime-base:sha-${{ github.sha }}
+          cache-from: |
+            type=gha,scope=asr-api-decoder
+            type=registry,ref=ghcr.io/wavey-ai/asr-api-decoder:buildcache
+          cache-to: |
+            type=gha,scope=asr-api-decoder,mode=max
+            type=registry,ref=ghcr.io/wavey-ai/asr-api-decoder:buildcache,mode=max
           secrets: |
             github_token=${{ secrets.WAVEY_AI_GH_TOKEN }}
 

@@ -1,21 +1,38 @@
 use crate::chunking::TimedWord;
-use anyhow::{Context, Result};
+#[cfg(feature = "cohere-backend")]
+use crate::cohere::CohereBackend as CohereAsrBackend;
+use crate::config::AsrModelProvider;
+#[cfg(feature = "nemo-backend")]
+use anyhow::Context;
+use anyhow::Result;
+#[cfg(feature = "nemo-backend")]
 use asr_onnx::{
     Config as OnnxConfig, JobMeta, TranscriberPool as OnnxDecoderPool,
     TranscriptionResult as OnnxResult,
 };
+#[cfg(feature = "nemo-backend")]
 use asr_torch::{FeaturizerPool, MelFeaturesPayload};
+#[cfg(feature = "nemo-backend")]
 use crossbeam_channel::Sender;
+#[cfg(feature = "nemo-backend")]
 use ndarray::Array2;
+#[cfg(feature = "nemo-backend")]
 use std::collections::HashMap;
 use std::path::Path;
+#[cfg(feature = "nemo-backend")]
 use std::sync::atomic::{AtomicU64, Ordering};
+#[cfg(feature = "nemo-backend")]
 use std::sync::{Arc, Mutex};
+#[cfg(feature = "nemo-backend")]
 use std::thread;
+#[cfg(feature = "nemo-backend")]
 use std::time::Duration;
+#[cfg(feature = "nemo-backend")]
 use tokio::sync::oneshot;
+#[cfg(feature = "nemo-backend")]
 use tracing::warn;
 
+#[cfg(feature = "nemo-backend")]
 type FeaturizerJob = (u64, u32, Vec<f32>);
 
 #[derive(Debug, Clone)]
@@ -25,12 +42,91 @@ pub struct WindowTranscription {
 }
 
 pub struct AsrBackend {
-    featurizer: FeaturizerClient,
-    decoder: OnnxDecoderClient,
+    inner: BackendImpl,
+}
+
+enum BackendImpl {
+    #[cfg(feature = "nemo-backend")]
+    Nemo(NemoAsrBackend),
+    #[cfg(feature = "cohere-backend")]
+    Cohere(CohereAsrBackend),
 }
 
 impl AsrBackend {
     pub fn new(
+        model_dir: &Path,
+        vocab_path: Option<&Path>,
+        model_provider: AsrModelProvider,
+        device_ids: &[usize],
+        torch_sessions: usize,
+        onnx_sessions: usize,
+        cohere_max_new_tokens: usize,
+    ) -> Result<Self> {
+        let inner = match model_provider {
+            AsrModelProvider::Nemo => {
+                #[cfg(feature = "nemo-backend")]
+                {
+                    BackendImpl::Nemo(NemoAsrBackend::new(
+                        model_dir,
+                        vocab_path.context("vocab path is required for the NeMo backend")?,
+                        device_ids,
+                        torch_sessions,
+                        onnx_sessions,
+                    )?)
+                }
+                #[cfg(not(feature = "nemo-backend"))]
+                {
+                    let _ = (model_dir, vocab_path, device_ids, torch_sessions, onnx_sessions);
+                    anyhow::bail!("this asr-api build does not include the NeMo backend");
+                }
+            }
+            AsrModelProvider::Cohere => {
+                #[cfg(feature = "cohere-backend")]
+                {
+                    let _ = torch_sessions;
+                    BackendImpl::Cohere(CohereAsrBackend::new(
+                        model_dir,
+                        device_ids,
+                        onnx_sessions,
+                        cohere_max_new_tokens,
+                    )?)
+                }
+                #[cfg(not(feature = "cohere-backend"))]
+                {
+                    let _ = (model_dir, device_ids, onnx_sessions, cohere_max_new_tokens);
+                    anyhow::bail!("this asr-api build does not include the Cohere backend");
+                }
+            }
+            AsrModelProvider::Auto => {
+                anyhow::bail!("AsrBackend::new requires a concrete ASR model provider")
+            }
+        };
+        Ok(Self { inner })
+    }
+
+    pub async fn transcribe_window(
+        &self,
+        samples: Vec<f32>,
+        seq: u32,
+    ) -> Result<WindowTranscription> {
+        match &self.inner {
+            #[cfg(feature = "nemo-backend")]
+            BackendImpl::Nemo(backend) => backend.transcribe_window(samples, seq).await,
+            #[cfg(feature = "cohere-backend")]
+            BackendImpl::Cohere(backend) => backend.transcribe_window(samples, seq).await,
+        }
+    }
+}
+
+#[cfg(feature = "nemo-backend")]
+struct NemoAsrBackend {
+    featurizer: FeaturizerClient,
+    decoder: OnnxDecoderClient,
+}
+
+#[cfg(feature = "nemo-backend")]
+impl NemoAsrBackend {
+    fn new(
         model_dir: &Path,
         vocab_path: &Path,
         device_ids: &[usize],
@@ -61,11 +157,7 @@ impl AsrBackend {
         })
     }
 
-    pub async fn transcribe_window(
-        &self,
-        samples: Vec<f32>,
-        seq: u32,
-    ) -> Result<WindowTranscription> {
+    async fn transcribe_window(&self, samples: Vec<f32>, seq: u32) -> Result<WindowTranscription> {
         let features = self.featurizer.featurize(seq, samples).await?;
         let features_array = Array2::from_shape_vec((features.rows, features.cols), features.data)
             .context("invalid mel feature tensor shape from asr-torch")?;
@@ -96,6 +188,7 @@ impl AsrBackend {
     }
 }
 
+#[cfg(feature = "nemo-backend")]
 struct FeaturizerClient {
     next_id: AtomicU64,
     job_sender: Sender<FeaturizerJob>,
@@ -103,6 +196,7 @@ struct FeaturizerClient {
         Arc<Mutex<HashMap<u64, oneshot::Sender<std::result::Result<MelFeaturesPayload, String>>>>>,
 }
 
+#[cfg(feature = "nemo-backend")]
 impl FeaturizerClient {
     fn new(pool: FeaturizerPool) -> Self {
         let pending: Arc<
@@ -166,16 +260,19 @@ impl FeaturizerClient {
     }
 }
 
+#[cfg(feature = "nemo-backend")]
 struct OnnxDecoderClient {
     pool: Arc<OnnxDecoderPool>,
     state: Arc<Mutex<OnnxDecoderState>>,
 }
 
+#[cfg(feature = "nemo-backend")]
 struct OnnxDecoderState {
     pending: HashMap<u64, oneshot::Sender<std::result::Result<OnnxResult, String>>>,
     completed: HashMap<u64, std::result::Result<OnnxResult, String>>,
 }
 
+#[cfg(feature = "nemo-backend")]
 impl OnnxDecoderClient {
     fn new(pool: OnnxDecoderPool) -> Self {
         let pool = Arc::new(pool);
@@ -229,6 +326,7 @@ impl OnnxDecoderClient {
     }
 }
 
+#[cfg(feature = "nemo-backend")]
 fn dispatch_onnx_decoder_result(state: &Arc<Mutex<OnnxDecoderState>>, result: OnnxResult) {
     let mut guard = state.lock().expect("onnx state mutex poisoned");
     if let Some(sender) = guard.pending.remove(&result.job_id) {

@@ -5,9 +5,11 @@ resources:
   - namespace.yaml
   - serviceaccount.yaml
   - ingress-configmap.yaml
+  - decoder-configmap.yaml
   - worker-configmap.yaml
   - pvc.yaml
   - ingress-deployment.yaml
+  - decoder-deployment.yaml
   - worker-deployment.yaml
   - services.yaml
   - ingress.yaml

@@ -2,4 +2,6 @@
 .DS_Store
 __pycache__/
 *.pyc
-models/*.tar.gz
+models/*
+!models/README.md
+!models/bucket-manifest.json
