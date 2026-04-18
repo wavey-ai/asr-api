@@ -42,6 +42,7 @@ ort = { git = "https://github.com/pykeio/ort.git", rev = "8724e89ff005ebef4339d7
     "std",
     "ndarray",
     "tracing",
+    "load-dynamic",
     "download-binaries",
     "tls-native",
     "copy-dylibs",

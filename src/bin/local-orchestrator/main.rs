@@ -194,13 +194,13 @@ async fn main() -> Result<()> {
                     "ASR_MODEL_PROVIDER",
                     config.model_provider.as_env().to_string(),
                 ),
-                ("ASR_DEVICE_IDS", config.device_ids.clone()),
                 ("ASR_TORCH_SESSIONS", config.torch_sessions.to_string()),
                 ("ASR_ONNX_SESSIONS", config.onnx_sessions.to_string()),
                 (
                     "ASR_COHERE_MAX_NEW_TOKENS",
                     config.cohere_max_new_tokens.to_string(),
                 ),
+                ("ASR_DEVICE_IDS", config.device_ids.clone()),
                 (
                     "UPLOAD_RESPONSE_WORKER_ID",
                     "asr-api-worker-local".to_string(),
@@ -302,6 +302,7 @@ async fn spawn_service(
     command.stdin(Stdio::null());
     command.stdout(Stdio::piped());
     command.stderr(Stdio::piped());
+    command.env_remove("ASR_DEVICE_IDS");
     command.env("RUST_LOG", &config.rust_log);
     command.env("ASR_LOG_FORMAT", &config.log_format);
     command.env("ENABLE_H3", bool_env(config.enable_h3));

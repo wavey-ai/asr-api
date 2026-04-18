@@ -250,10 +250,12 @@ impl AppConfig {
         if self.role.uses_asr_backend() {
             let model_dir = self.model_dir()?;
             let provider = self.resolved_model_provider()?;
-            anyhow::ensure!(
-                !self.device_ids.is_empty(),
-                "ASR_DEVICE_IDS must include at least one device id"
-            );
+            if !matches!(provider, AsrModelProvider::Cohere) {
+                anyhow::ensure!(
+                    !self.device_ids.is_empty(),
+                    "ASR_DEVICE_IDS must include at least one device id"
+                );
+            }
             anyhow::ensure!(
                 self.torch_sessions > 0,
                 "ASR_TORCH_SESSIONS must be greater than 0"

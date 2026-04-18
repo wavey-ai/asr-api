@@ -14,6 +14,7 @@ use ort::value::Tensor as OrtTensor;
 use rustfft::FftPlanner;
 use rustfft::num_complex::Complex32;
 use serde::Deserialize;
+use std::env;
 use std::collections::HashMap;
 use std::f32::consts::PI;
 use std::fs;
@@ -165,12 +166,13 @@ impl CohereDecoderClient {
             completed: HashMap::new(),
         }));
 
-        let effective_device_ids = if device_ids.is_empty() {
-            vec![0usize]
+        let force_cpu = env_var_truthy("ASR_COHERE_FORCE_CPU");
+        let effective_device_ids = if force_cpu || device_ids.is_empty() {
+            vec![None]
         } else {
-            device_ids.to_vec()
+            device_ids.iter().copied().map(Some).collect()
         };
-        for &device_id in &effective_device_ids {
+        for device_id in effective_device_ids {
             for _ in 0..onnx_sessions.max(1) {
                 let worker = CohereWorker::new(
                     model_dir,
@@ -270,7 +272,7 @@ struct CohereWorker {
 impl CohereWorker {
     fn new(
         model_dir: &Path,
-        device_id: usize,
+        device_id: Option<usize>,
         tokenizer: Tokenizer,
         decode: DecodeConfig,
     ) -> Result<Self> {
@@ -513,6 +515,12 @@ fn ort_error<E: std::fmt::Display>(error: E) -> anyhow::Error {
     anyhow::anyhow!(error.to_string())
 }
 
+fn env_var_truthy(name: &str) -> bool {
+    env::var(name)
+        .map(|value| matches!(value.as_str(), "1" | "true" | "TRUE" | "True"))
+        .unwrap_or(false)
+}
+
 fn ensure_ort_initialized() -> Result<()> {
     let result = ORT_INIT.get_or_init(|| {
         let _created = ort::init().commit();
@@ -539,14 +547,18 @@ fn session_from_providers(path: &Path, providers: &[ExecutionProviderDispatch]) 
         .map_err(ort_error)
 }
 
-fn provider_chain(device_id: usize) -> Vec<ExecutionProviderDispatch> {
-    vec![
-        CUDAExecutionProvider::default()
-            .with_device_id(device_id as i32)
-            .build()
-            .error_on_failure(),
-        CPUExecutionProvider::default().build(),
-    ]
+fn provider_chain(device_id: Option<usize>) -> Vec<ExecutionProviderDispatch> {
+    let mut providers = Vec::with_capacity(2);
+    if let Some(device_id) = device_id {
+        providers.push(
+            CUDAExecutionProvider::default()
+                .with_device_id(device_id as i32)
+                .build()
+                .error_on_failure(),
+        );
+    }
+    providers.push(CPUExecutionProvider::default().build());
+    providers
 }
 
 struct CohereFrontend {
