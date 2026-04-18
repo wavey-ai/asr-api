@@ -28,5 +28,9 @@ scripts/sync-model-from-bucket.sh \
   --dest /var/lib/asr-api/models/cohere-transcribe-03-2026
 ```
 
+The sync helper writes a local state file and skips the download when the
+destination already matches the bucket objects for that model. Treat it as a
+seed/update step, not something every code deploy needs to rerun.
+
 The repo ignores local payloads under `models/`, so downloaded bundles stay out
 of Git.

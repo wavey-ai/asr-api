@@ -63,6 +63,14 @@ scripts/sync-model-from-bucket.sh \
   --dest /var/lib/asr-api/models/parakeet-tdt
 ```
 
+That sync step is intended as model seeding / updating, not normal code deploy.
+The helper records remote object metadata in the target directory and skips the
+download when the local bundle is already current.
+
+For standalone hosts, keep the model on persistent disk and restart only the
+service binary during normal deploys. Re-run the sync helper only when you are
+changing the model version, repairing a missing bundle, or forcing a refresh.
+
 Correlation IDs use Wavey's snowflake generator and are propagated internally in `x-wavey-request-id`. If the client supplies a numeric `x-request-id`, `asr-api` will reuse it; otherwise ingress will mint one and carry it through the request path.
 
 ## Local Run

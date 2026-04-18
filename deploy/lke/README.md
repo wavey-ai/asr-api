@@ -47,6 +47,8 @@ When `ASR_API_MODEL_TARBALL_URL` is set, each deploy run will sync that archive 
 
 For split bundles such as Cohere, use the bucket manifest in `models/bucket-manifest.json`
 plus `scripts/sync-model-from-bucket.sh` to seed the target host or PVC directly.
+That helper is idempotent: it records bucket object metadata in the destination
+directory and skips the download when the local bundle is already current.
 
 ## Runtime layout
 
