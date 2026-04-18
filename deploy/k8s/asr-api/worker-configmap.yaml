@@ -9,8 +9,8 @@ data:
   ENABLE_H3: "false"
   ASR_MODEL_DIR: /var/lib/asr-api/models/parakeet-tdt
   ASR_DEVICE_IDS: "0"
-  ASR_TORCH_SESSIONS: "5"
-  ASR_ONNX_SESSIONS: "5"
+  ASR_TORCH_SESSIONS: "1"
+  ASR_ONNX_SESSIONS: "1"
   ASR_ONNX_TRT_COMPONENTS: none
   ASR_ONNX_TRT_FP16: "true"
   ASR_ONNX_TRT_BUILDER_OPT_LEVEL: "5"
