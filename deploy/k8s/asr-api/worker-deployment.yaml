@@ -40,6 +40,10 @@ spec:
                     operator: In
                     values:
                       - "true"
+                  - key: wavey.ai/gpu-vram-free-ge-16384mib
+                    operator: In
+                    values:
+                      - "true"
       initContainers:
         - name: verify-model
           image: busybox:1.36
