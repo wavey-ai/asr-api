@@ -1,5 +1,6 @@
 use anyhow::{Context, Result};
 use clap::{Parser, ValueEnum};
+use std::env;
 use std::path::{Path, PathBuf};
 use upload_response::UploadResponseConfig;
 use web_service::{load_default_tls_base64, load_tls_base64_from_paths};
@@ -250,12 +251,6 @@ impl AppConfig {
         if self.role.uses_asr_backend() {
             let model_dir = self.model_dir()?;
             let provider = self.resolved_model_provider()?;
-            if !matches!(provider, AsrModelProvider::Cohere) {
-                anyhow::ensure!(
-                    !self.device_ids.is_empty(),
-                    "ASR_DEVICE_IDS must include at least one device id"
-                );
-            }
             anyhow::ensure!(
                 self.torch_sessions > 0,
                 "ASR_TORCH_SESSIONS must be greater than 0"
@@ -319,6 +314,11 @@ impl AppConfig {
                     }
                 }
                 AsrModelProvider::Cohere => {
+                    let force_cpu = env_var_truthy("ASR_COHERE_FORCE_CPU");
+                    anyhow::ensure!(
+                        force_cpu || !self.device_ids.is_empty(),
+                        "Cohere backend requires at least one GPU device id; set ASR_DEVICE_IDS or use ASR_COHERE_FORCE_CPU=true for explicit CPU compare mode"
+                    );
                     ensure_all_exists(
                         model_dir,
                         &[
@@ -337,6 +337,13 @@ impl AppConfig {
                     )?;
                 }
                 AsrModelProvider::Auto => unreachable!("model provider should resolve before validation"),
+            }
+
+            if !matches!(provider, AsrModelProvider::Cohere) {
+                anyhow::ensure!(
+                    !self.device_ids.is_empty(),
+                    "ASR_DEVICE_IDS must include at least one device id"
+                );
             }
         }
 
@@ -494,4 +501,10 @@ fn ensure_all_exists(model_dir: &Path, required: &[&str]) -> Result<()> {
 
 fn seconds_to_samples(seconds: f32) -> usize {
     (seconds.max(0.0) * ASR_SAMPLE_RATE as f32).round() as usize
+}
+
+fn env_var_truthy(name: &str) -> bool {
+    env::var(name)
+        .map(|value| matches!(value.as_str(), "1" | "true" | "TRUE" | "True"))
+        .unwrap_or(false)
 }

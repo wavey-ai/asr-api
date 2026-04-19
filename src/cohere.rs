@@ -158,6 +158,14 @@ impl CohereDecoderClient {
         tokenizer: Tokenizer,
         decode: DecodeConfig,
     ) -> Result<Self> {
+        let force_cpu = env_var_truthy("ASR_COHERE_FORCE_CPU");
+        if !force_cpu {
+            anyhow::ensure!(
+                !device_ids.is_empty(),
+                "Cohere backend requires at least one GPU device id; set ASR_DEVICE_IDS or use ASR_COHERE_FORCE_CPU=true for explicit CPU compare mode"
+            );
+        }
+
         let worker_count = device_ids.len().max(1) * onnx_sessions.max(1);
         let (job_tx, job_rx) = bounded::<CohereJob>(worker_count * 2);
         let (result_tx, result_rx) = bounded::<CohereJobResult>(worker_count * 2);
@@ -166,8 +174,7 @@ impl CohereDecoderClient {
             completed: HashMap::new(),
         }));
 
-        let force_cpu = env_var_truthy("ASR_COHERE_FORCE_CPU");
-        let effective_device_ids = if force_cpu || device_ids.is_empty() {
+        let effective_device_ids = if force_cpu {
             vec![None]
         } else {
             device_ids.iter().copied().map(Some).collect()
@@ -548,17 +555,15 @@ fn session_from_providers(path: &Path, providers: &[ExecutionProviderDispatch]) 
 }
 
 fn provider_chain(device_id: Option<usize>) -> Vec<ExecutionProviderDispatch> {
-    let mut providers = Vec::with_capacity(2);
-    if let Some(device_id) = device_id {
-        providers.push(
+    match device_id {
+        Some(device_id) => vec![
             CUDAExecutionProvider::default()
                 .with_device_id(device_id as i32)
                 .build()
                 .error_on_failure(),
-        );
+        ],
+        None => vec![CPUExecutionProvider::default().build()],
     }
-    providers.push(CPUExecutionProvider::default().build());
-    providers
 }
 
 struct CohereFrontend {
