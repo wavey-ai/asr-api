@@ -8,19 +8,16 @@ use anyhow::Result;
 use av_api::linear16::Linear16PcmStream;
 use bytes::Bytes;
 use gpu_worker_upload_response::{
-    run_local_worker_loop, LocalJob, LocalJobProcessor, LocalWorkerConfig, PipelineSpec, SinkLane,
-    SourceLane,
+    run_local_worker_loop, run_remote_worker_loop, LocalJob, LocalJobProcessor, LocalWorkerConfig,
+    PipelineSpec, RemoteJob, RemoteJobProcessor, RemoteWorkerConfig, SinkLane, SourceLane,
 };
 use soundkit::audio_pipeline::audio_to_mono_f32;
 use soundkit_decoder::{DecodeOptions, DecodePipeline, DecodePipelineHandle};
-use std::collections::HashSet;
 use std::sync::Arc;
-use tokio::task::JoinSet;
 use tokio::time::{interval, Duration};
-use tracing::{debug, error, info, info_span, warn, Instrument};
+use tracing::{error, info, info_span, Instrument};
 use upload_response::{
-    discover_ingress_origins, request_from_stream_headers, RemoteIngressClient, RemoteRequestSlot,
-    RequestControl, TailSlot, UploadResponseService, WorkerHeartbeatUpdate,
+    RemoteIngressClient, RemoteRequestSlot, RequestControl, TailSlot, UploadResponseService,
 };
 
 #[derive(Clone)]
@@ -48,39 +45,6 @@ impl DecoderState {
         })
     }
 
-    fn worker_heartbeat(&self, inflight: usize) -> WorkerHeartbeatUpdate {
-        let max_inflight = self.config.upload_response_max_inflight;
-        let inflight = inflight.min(max_inflight);
-        WorkerHeartbeatUpdate {
-            stage: "decode".to_string(),
-            max_inflight,
-            inflight,
-            available_slots: max_inflight.saturating_sub(inflight),
-        }
-    }
-
-    async fn publish_remote_worker_capacity(
-        &self,
-        client: &RemoteIngressClient,
-        origins: &[String],
-        inflight: usize,
-    ) {
-        let heartbeat = self.worker_heartbeat(inflight);
-        for origin in origins {
-            if let Err(error) = client
-                .heartbeat_worker(origin, &self.config.upload_response_worker_id, &heartbeat)
-                .await
-            {
-                warn!(
-                    origin,
-                    worker_id = %self.config.upload_response_worker_id,
-                    error = %error,
-                    "failed to publish remote decoder capacity"
-                );
-            }
-        }
-    }
-
     async fn run_cache_worker(self: Arc<Self>, service: Arc<UploadResponseService>) {
         run_local_worker_loop(service, self.local_worker_config(), self).await;
     }
@@ -105,6 +69,30 @@ impl DecoderState {
         config
     }
 
+    fn remote_worker_config(&self) -> RemoteWorkerConfig {
+        let mut config = RemoteWorkerConfig::new(
+            self.config.upload_response_worker_id.clone(),
+            PipelineSpec {
+                source: SourceLane::Request,
+                sink: SinkLane::Stage(DECODE_STAGE.to_string()),
+            },
+        );
+        config.heartbeat_stage = "decode".to_string();
+        config.max_inflight = self.config.upload_response_max_inflight;
+        config.poll_interval =
+            Duration::from_millis(self.config.upload_response_worker_poll_ms.max(1));
+        config.discovery_interval =
+            Duration::from_millis(self.config.upload_response_discovery_interval_ms.max(1));
+        config.heartbeat_interval = Duration::from_millis(
+            self.config
+                .upload_response_worker_heartbeat_interval_ms
+                .max(1),
+        );
+        config.ingress_urls = self.config.upload_response_ingress_urls.clone();
+        config.discovery_dns = self.config.upload_response_discovery_dns.clone();
+        config
+    }
+
     async fn run_remote_cache_worker(self: Arc<Self>) {
         let client = match RemoteIngressClient::new(
             self.config.upload_response_config().slot_bytes(),
@@ -116,184 +104,14 @@ impl DecoderState {
                 return;
             }
         };
-
-        let mut poll = interval(Duration::from_millis(
-            self.config.upload_response_worker_poll_ms.max(1),
-        ));
-        let mut discovery = interval(Duration::from_millis(
-            self.config.upload_response_discovery_interval_ms.max(1),
-        ));
-        let mut heartbeat = interval(Duration::from_millis(
-            self.config
-                .upload_response_worker_heartbeat_interval_ms
-                .max(1),
-        ));
-        let mut inflight = HashSet::new();
-        let mut tasks = JoinSet::new();
-        let mut origins: Vec<String> = Vec::new();
-        let mut refresh_origins = true;
-        let mut send_heartbeat = true;
-
-        info!(
-            worker_id = %self.config.upload_response_worker_id,
-            max_inflight = self.config.upload_response_max_inflight,
-            poll_ms = self.config.upload_response_worker_poll_ms,
-            discovery_ms = self.config.upload_response_discovery_interval_ms,
-            heartbeat_ms = self.config.upload_response_worker_heartbeat_interval_ms,
-            "remote decode worker started"
-        );
-
-        loop {
-            tokio::select! {
-                _ = poll.tick() => {}
-                _ = discovery.tick() => {
-                    refresh_origins = true;
-                }
-                _ = heartbeat.tick() => {
-                    send_heartbeat = true;
-                }
-            }
-
-            if refresh_origins {
-                match discover_ingress_origins(
-                    &self.config.upload_response_ingress_urls,
-                    self.config.upload_response_discovery_dns.as_deref(),
-                )
-                .await
-                {
-                    Ok(next) => {
-                        if next != origins {
-                            debug!(origins = ?next, "updated ingress origins");
-                        }
-                        origins = next;
-                    }
-                    Err(error) => {
-                        warn!(error = %error, "failed to discover ingress origins");
-                    }
-                }
-                refresh_origins = false;
-                send_heartbeat = true;
-            }
-
-            while let Some(joined) = tasks.try_join_next() {
-                match joined {
-                    Ok(key) => {
-                        inflight.remove(&key);
-                        send_heartbeat = true;
-                    }
-                    Err(error) => {
-                        error!(%error, "remote decode worker task failed");
-                    }
-                }
-            }
-
-            if send_heartbeat {
-                self.publish_remote_worker_capacity(&client, &origins, inflight.len())
-                    .await;
-                send_heartbeat = false;
-            }
-
-            if inflight.len() >= self.config.upload_response_max_inflight {
-                continue;
-            }
-
-            for origin in &origins {
-                if inflight.len() >= self.config.upload_response_max_inflight {
-                    break;
-                }
-
-                let streams = match client.list_streams(origin).await {
-                    Ok(streams) => streams,
-                    Err(error) => {
-                        warn!(origin, error = %error, "failed to list remote streams");
-                        continue;
-                    }
-                };
-
-                for stream in streams {
-                    if inflight.len() >= self.config.upload_response_max_inflight {
-                        break;
-                    }
-                    if stream.request_last == 0
-                        || stream.stage_last(DECODE_STAGE) != 0
-                        || stream.stage_owner(DECODE_STAGE).is_some()
-                    {
-                        continue;
-                    }
-
-                    let inflight_key = format!("{}#{}", origin, stream.stream_id);
-                    if inflight.contains(&inflight_key) {
-                        continue;
-                    }
-
-                    match client
-                        .try_claim_stage(
-                            origin,
-                            stream.stream_id,
-                            DECODE_STAGE,
-                            &self.config.upload_response_worker_id,
-                        )
-                        .await
-                    {
-                        Ok(true) => {}
-                        Ok(false) => continue,
-                        Err(error) => {
-                            warn!(
-                                origin,
-                                stream_id = stream.stream_id,
-                                error = %error,
-                                "failed to claim remote processing stream"
-                            );
-                            continue;
-                        }
-                    }
-
-                    let _ = client
-                        .register_reader(
-                            origin,
-                            stream.stream_id,
-                            &self.config.upload_response_worker_id,
-                        )
-                        .await;
-
-                    inflight.insert(inflight_key.clone());
-                    send_heartbeat = true;
-                    let worker = self.clone();
-                    let client = client.clone();
-                    let worker_id = self.config.upload_response_worker_id.clone();
-                    let origin = origin.clone();
-                    tasks.spawn(async move {
-                        let result = worker
-                            .process_remote_stream(&client, &origin, stream.stream_id)
-                            .await;
-                        if let Err(error) = result {
-                            error!(
-                                origin,
-                                stream_id = stream.stream_id,
-                                error = %error,
-                                "remote cached decode failed"
-                            );
-                        }
-                        let _ = client
-                            .release_stage(&origin, stream.stream_id, DECODE_STAGE, &worker_id)
-                            .await;
-
-                        let _ = client
-                            .unregister_reader(&origin, stream.stream_id, &worker_id)
-                            .await;
-                        inflight_key
-                    });
-                }
-            }
-        }
+        run_remote_worker_loop(client, self.remote_worker_config(), self).await;
     }
 
     async fn process_local_job(&self, job: LocalJob) -> Result<()> {
-        let request = request_from_stream_headers(
-            job.request_headers()
-                .await
-                .ok_or_else(|| anyhow::anyhow!("request headers were missing"))?,
-        )?;
+        let request = job
+            .request()
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("request headers were missing"))?;
         let request_id = request_id_from_headers(request.headers()).unwrap_or_else(next_request_id);
         let span = info_span!(
             "decoder_cached_stream",
@@ -312,30 +130,31 @@ impl DecoderState {
         .await
     }
 
-    async fn process_remote_stream(
-        &self,
-        client: &RemoteIngressClient,
-        origin: &str,
-        stream_id: u64,
-    ) -> Result<()> {
-        let request = client
-            .request_headers(origin, stream_id)
+    async fn process_remote_job(&self, job: RemoteJob) -> Result<()> {
+        let request = job
+            .request()
             .await?
             .ok_or_else(|| anyhow::anyhow!("request headers were missing"))?;
         let request_id = request_id_from_headers(request.headers()).unwrap_or_else(next_request_id);
         let span = info_span!(
             "decoder_remote_stream",
             request_id,
-            stream_id,
-            worker_id = %self.config.upload_response_worker_id,
-            origin = %origin,
+            stream_id = job.stream_id,
+            worker_id = %job.worker_id(),
+            origin = %job.origin,
             source = "remote_cache",
         );
 
         async move {
-            let mut sink = RemoteProcessingSink::new(client.clone(), origin.to_string(), stream_id);
-            self.decode_remote_request(client, origin, stream_id, &request, &mut sink)
-                .await
+            let mut sink = RemoteProcessingSink::new(job.clone());
+            self.decode_remote_request(
+                job.client(),
+                &job.origin,
+                job.stream_id,
+                &request,
+                &mut sink,
+            )
+            .await
         }
         .instrument(span)
         .await
@@ -626,45 +445,31 @@ impl ProcessingSink for LocalProcessingSink {
 }
 
 struct RemoteProcessingSink {
-    client: RemoteIngressClient,
-    origin: String,
-    stream_id: u64,
+    job: RemoteJob,
 }
 
 impl RemoteProcessingSink {
-    fn new(client: RemoteIngressClient, origin: String, stream_id: u64) -> Self {
-        Self {
-            client,
-            origin,
-            stream_id,
-        }
+    fn new(job: RemoteJob) -> Self {
+        Self { job }
     }
 }
 
 #[async_trait::async_trait]
 impl ProcessingSink for RemoteProcessingSink {
     async fn write_head(&mut self, head: Bytes) -> Result<()> {
-        self.client
-            .write_stage_head(&self.origin, self.stream_id, DECODE_STAGE, head)
-            .await
+        self.job.write_stage_head(head).await
     }
 
     async fn append_body(&mut self, body: Bytes) -> Result<()> {
-        self.client
-            .append_stage_body(&self.origin, self.stream_id, DECODE_STAGE, body)
-            .await
+        self.job.append_body(body).await
     }
 
     async fn append_control(&mut self, control: RequestControl) -> Result<()> {
-        self.client
-            .append_stage_control(&self.origin, self.stream_id, DECODE_STAGE, control)
-            .await
+        self.job.append_control(control).await
     }
 
     async fn finish(&mut self) -> Result<()> {
-        self.client
-            .end_stage(&self.origin, self.stream_id, DECODE_STAGE)
-            .await
+        self.job.end().await
     }
 }
 
@@ -676,5 +481,12 @@ fn processing_head_bytes() -> Result<Bytes> {
 impl LocalJobProcessor for DecoderState {
     async fn process(&self, job: LocalJob) -> Result<()> {
         self.process_local_job(job).await
+    }
+}
+
+#[async_trait::async_trait]
+impl RemoteJobProcessor for DecoderState {
+    async fn process(&self, job: RemoteJob) -> Result<()> {
+        self.process_remote_job(job).await
     }
 }

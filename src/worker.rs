@@ -18,6 +18,10 @@ use av_api::linear16::Linear16PcmStream;
 use bytes::Bytes;
 #[cfg(feature = "audio-decoder")]
 use futures_util::{SinkExt, StreamExt};
+use gpu_worker_upload_response::{
+    run_local_worker_loop, run_remote_worker_loop, LocalJob, LocalJobProcessor, LocalWorkerConfig,
+    PipelineSpec, RemoteJob, RemoteJobProcessor, RemoteWorkerConfig, SinkLane, SourceLane,
+};
 use http::{header::CONTENT_TYPE, Request, StatusCode};
 #[cfg(feature = "audio-decoder")]
 use hyper::upgrade::Upgraded;
@@ -31,17 +35,15 @@ use sha2::{Digest, Sha256};
 use soundkit::audio_pipeline::audio_to_mono_f32;
 #[cfg(feature = "audio-decoder")]
 use soundkit_decoder::{DecodeOptions, DecodePipeline, DecodePipelineHandle};
-use std::collections::{BTreeMap, HashSet};
+use std::collections::BTreeMap;
 use std::sync::Arc;
-use tokio::task::JoinSet;
 use tokio::time::{interval, Duration};
 #[cfg(feature = "audio-decoder")]
 use tokio_tungstenite::{tungstenite::Message, WebSocketStream};
-use tracing::{debug, error, info, info_span, trace, warn, Instrument};
+use tracing::{debug, error, info, info_span, trace, Instrument};
 use upload_response::{
-    discover_ingress_origins, request_from_stream_headers, RemoteIngressClient, RemoteStageSlot,
-    RequestControl, ResponseCacheWriter, StageTailSlot, TailSlot, UploadResponseService,
-    WorkerHeartbeatUpdate,
+    request_from_stream_headers, RemoteIngressClient, RemoteStageSlot, RequestControl,
+    ResponseCacheWriter, StageTailSlot, TailSlot, UploadResponseService,
 };
 use web_service::HandlerResponse;
 #[cfg(feature = "audio-decoder")]
@@ -202,57 +204,55 @@ impl WorkerState {
         })
     }
 
+    fn local_worker_config(&self) -> LocalWorkerConfig {
+        let mut config = LocalWorkerConfig::new(
+            self.config.upload_response_worker_id.clone(),
+            PipelineSpec {
+                source: SourceLane::Stage(DECODE_STAGE.to_string()),
+                sink: SinkLane::Response,
+            },
+        );
+        config.heartbeat_stage = "response".to_string();
+        config.max_inflight = self.config.upload_response_max_inflight;
+        config.poll_interval =
+            Duration::from_millis(self.config.upload_response_worker_poll_ms.max(1));
+        config.heartbeat_interval = Duration::from_millis(
+            self.config
+                .upload_response_worker_heartbeat_interval_ms
+                .max(1),
+        );
+        config
+    }
+
+    fn remote_worker_config(&self) -> RemoteWorkerConfig {
+        let mut config = RemoteWorkerConfig::new(
+            self.config.upload_response_worker_id.clone(),
+            PipelineSpec {
+                source: SourceLane::Stage(DECODE_STAGE.to_string()),
+                sink: SinkLane::Response,
+            },
+        );
+        config.heartbeat_stage = "response".to_string();
+        config.max_inflight = self.config.upload_response_max_inflight;
+        config.poll_interval =
+            Duration::from_millis(self.config.upload_response_worker_poll_ms.max(1));
+        config.discovery_interval =
+            Duration::from_millis(self.config.upload_response_discovery_interval_ms.max(1));
+        config.heartbeat_interval = Duration::from_millis(
+            self.config
+                .upload_response_worker_heartbeat_interval_ms
+                .max(1),
+        );
+        config.ingress_urls = self.config.upload_response_ingress_urls.clone();
+        config.discovery_dns = self.config.upload_response_discovery_dns.clone();
+        config
+    }
+
     #[cfg(feature = "audio-decoder")]
     pub async fn handle_listen(&self, req: Request<()>, body: BodyStream) -> HandlerResponse {
         match self.handle_listen_inner(req, body).await {
             Ok(response) => response,
             Err(error) => error_response(classify_error(&error), error.to_string()),
-        }
-    }
-
-    fn worker_heartbeat(&self, inflight: usize) -> WorkerHeartbeatUpdate {
-        let max_inflight = self.config.upload_response_max_inflight;
-        let inflight = inflight.min(max_inflight);
-        WorkerHeartbeatUpdate {
-            stage: "response".to_string(),
-            max_inflight,
-            inflight,
-            available_slots: max_inflight.saturating_sub(inflight),
-        }
-    }
-
-    async fn publish_local_worker_capacity(
-        &self,
-        service: &UploadResponseService,
-        inflight: usize,
-    ) {
-        service
-            .upsert_worker_heartbeat(
-                &self.config.upload_response_worker_id,
-                self.worker_heartbeat(inflight),
-            )
-            .await;
-    }
-
-    async fn publish_remote_worker_capacity(
-        &self,
-        client: &RemoteIngressClient,
-        origins: &[String],
-        inflight: usize,
-    ) {
-        let heartbeat = self.worker_heartbeat(inflight);
-        for origin in origins {
-            if let Err(error) = client
-                .heartbeat_worker(origin, &self.config.upload_response_worker_id, &heartbeat)
-                .await
-            {
-                warn!(
-                    origin,
-                    worker_id = %self.config.upload_response_worker_id,
-                    error = %error,
-                    "failed to publish remote worker capacity"
-                );
-            }
         }
     }
 
@@ -450,15 +450,15 @@ impl WorkerState {
             if result.words.is_empty() {
                 state.push_fallback_fragment(result.text.trim());
             } else {
-            let committed = commit_absolute_words(
-                &mut state.committer,
-                window.start_sample,
-                state.chunker.stride_samples(),
-                true,
-                &result.words,
-            );
-            self.emit_streaming_committed(state, committed, false, sink)
-                .await?;
+                let committed = commit_absolute_words(
+                    &mut state.committer,
+                    window.start_sample,
+                    state.chunker.stride_samples(),
+                    true,
+                    &result.words,
+                );
+                self.emit_streaming_committed(state, committed, false, sink)
+                    .await?;
             }
         }
 
@@ -669,107 +669,7 @@ impl WorkerState {
     }
 
     async fn run_cache_worker(self: Arc<Self>, service: Arc<UploadResponseService>) {
-        info!(
-            worker_id = %self.config.upload_response_worker_id,
-            max_inflight = self.config.upload_response_max_inflight,
-            poll_ms = self.config.upload_response_worker_poll_ms,
-            heartbeat_ms = self.config.upload_response_worker_heartbeat_interval_ms,
-            "local cache worker started"
-        );
-        let mut poll = interval(Duration::from_millis(
-            self.config.upload_response_worker_poll_ms.max(1),
-        ));
-        let mut heartbeat = interval(Duration::from_millis(
-            self.config
-                .upload_response_worker_heartbeat_interval_ms
-                .max(1),
-        ));
-        let mut inflight = HashSet::new();
-        let mut tasks = JoinSet::new();
-        let mut send_heartbeat = true;
-
-        loop {
-            tokio::select! {
-                _ = poll.tick() => {}
-                _ = heartbeat.tick() => {
-                    send_heartbeat = true;
-                }
-            }
-
-            while let Some(joined) = tasks.try_join_next() {
-                match joined {
-                    Ok(stream_id) => {
-                        inflight.remove(&stream_id);
-                        send_heartbeat = true;
-                    }
-                    Err(error) => {
-                        error!(%error, "cache worker task failed");
-                    }
-                }
-            }
-
-            if send_heartbeat {
-                self.publish_local_worker_capacity(&service, inflight.len())
-                    .await;
-                send_heartbeat = false;
-            }
-
-            if inflight.len() >= self.config.upload_response_max_inflight {
-                continue;
-            }
-
-            for stream in service.active_streams().await {
-                if inflight.len() >= self.config.upload_response_max_inflight {
-                    break;
-                }
-                if inflight.contains(&stream.stream_id)
-                    || stream.stage_last(DECODE_STAGE) == 0
-                    || stream.response_owner.is_some()
-                {
-                    continue;
-                }
-
-                if !service
-                    .try_claim_response(stream.stream_id, &self.config.upload_response_worker_id)
-                    .await
-                {
-                    continue;
-                }
-
-                let _ = service
-                    .register_reader(stream.stream_id, &self.config.upload_response_worker_id)
-                    .await;
-
-                inflight.insert(stream.stream_id);
-                send_heartbeat = true;
-                let service = service.clone();
-                let worker = self.clone();
-                let worker_id = self.config.upload_response_worker_id.clone();
-                tasks.spawn(async move {
-                    let stream_id = stream.stream_id;
-                    let result = worker
-                        .process_cached_stream(service.clone(), stream_id)
-                        .await;
-                    if let Err(error) = result {
-                        error!(stream_id, error = %error, "cached transcription failed");
-                        let response = error_response(classify_error(&error), error.to_string());
-                        if let Err(write_error) = service
-                            .write_handler_response(stream_id, response)
-                            .await
-                            .map_err(anyhow::Error::msg)
-                        {
-                            error!(
-                                stream_id,
-                                error = %write_error,
-                                "failed to write cached error response"
-                            );
-                            let _ = service.release_response(stream_id, &worker_id).await;
-                        }
-                    }
-                    stream_id
-                });
-            }
-        }
+        run_local_worker_loop(service, self.local_worker_config(), self).await;
     }
 
     async fn run_remote_cache_worker(self: Arc<Self>) {
@@ -783,185 +683,7 @@ impl WorkerState {
                 return;
             }
         };
-
-        let mut poll = interval(Duration::from_millis(
-            self.config.upload_response_worker_poll_ms.max(1),
-        ));
-        let mut discovery = interval(Duration::from_millis(
-            self.config.upload_response_discovery_interval_ms.max(1),
-        ));
-        let mut heartbeat = interval(Duration::from_millis(
-            self.config
-                .upload_response_worker_heartbeat_interval_ms
-                .max(1),
-        ));
-        let mut inflight = HashSet::new();
-        let mut tasks = JoinSet::new();
-        let mut origins: Vec<String> = Vec::new();
-        let mut refresh_origins = true;
-        let mut send_heartbeat = true;
-
-        info!(
-            worker_id = %self.config.upload_response_worker_id,
-            max_inflight = self.config.upload_response_max_inflight,
-            poll_ms = self.config.upload_response_worker_poll_ms,
-            discovery_ms = self.config.upload_response_discovery_interval_ms,
-            heartbeat_ms = self.config.upload_response_worker_heartbeat_interval_ms,
-            "remote cache worker started"
-        );
-
-        loop {
-            tokio::select! {
-                _ = poll.tick() => {}
-                _ = discovery.tick() => {
-                    refresh_origins = true;
-                }
-                _ = heartbeat.tick() => {
-                    send_heartbeat = true;
-                }
-            }
-
-            if refresh_origins {
-                match discover_ingress_origins(
-                    &self.config.upload_response_ingress_urls,
-                    self.config.upload_response_discovery_dns.as_deref(),
-                )
-                .await
-                {
-                    Ok(next) => {
-                        if next != origins {
-                            debug!(origins = ?next, "updated ingress origins");
-                        }
-                        origins = next;
-                    }
-                    Err(error) => {
-                        warn!(error = %error, "failed to discover ingress origins");
-                    }
-                }
-                refresh_origins = false;
-                send_heartbeat = true;
-            }
-
-            while let Some(joined) = tasks.try_join_next() {
-                match joined {
-                    Ok(key) => {
-                        inflight.remove(&key);
-                        send_heartbeat = true;
-                    }
-                    Err(error) => {
-                        error!(%error, "remote cache worker task failed");
-                    }
-                }
-            }
-
-            if send_heartbeat {
-                self.publish_remote_worker_capacity(&client, &origins, inflight.len())
-                    .await;
-                send_heartbeat = false;
-            }
-
-            if inflight.len() >= self.config.upload_response_max_inflight {
-                continue;
-            }
-
-            for origin in &origins {
-                if inflight.len() >= self.config.upload_response_max_inflight {
-                    break;
-                }
-
-                let streams = match client.list_streams(origin).await {
-                    Ok(streams) => streams,
-                    Err(error) => {
-                        warn!(origin, error = %error, "failed to list remote streams");
-                        continue;
-                    }
-                };
-
-                for stream in streams {
-                    if inflight.len() >= self.config.upload_response_max_inflight {
-                        break;
-                    }
-                    if stream.stage_last(DECODE_STAGE) == 0 || stream.response_owner.is_some() {
-                        continue;
-                    }
-
-                    let inflight_key = format!("{}#{}", origin, stream.stream_id);
-                    if inflight.contains(&inflight_key) {
-                        continue;
-                    }
-
-                    match client
-                        .try_claim_response(
-                            origin,
-                            stream.stream_id,
-                            &self.config.upload_response_worker_id,
-                        )
-                        .await
-                    {
-                        Ok(true) => {}
-                        Ok(false) => continue,
-                        Err(error) => {
-                            warn!(
-                                origin,
-                                stream_id = stream.stream_id,
-                                error = %error,
-                                "failed to claim remote response"
-                            );
-                            continue;
-                        }
-                    }
-
-                    let _ = client
-                        .register_reader(
-                            origin,
-                            stream.stream_id,
-                            &self.config.upload_response_worker_id,
-                        )
-                        .await;
-
-                    inflight.insert(inflight_key.clone());
-                    send_heartbeat = true;
-                    let worker = self.clone();
-                    let client = client.clone();
-                    let worker_id = self.config.upload_response_worker_id.clone();
-                    let origin = origin.clone();
-                    tasks.spawn(async move {
-                        let result = worker
-                            .process_remote_stream(&client, &origin, stream.stream_id)
-                            .await;
-                        if let Err(error) = result {
-                            error!(
-                                origin,
-                                stream_id = stream.stream_id,
-                                error = %error,
-                                "remote cached transcription failed"
-                            );
-                            let response =
-                                error_response(classify_error(&error), error.to_string());
-                            if let Err(write_error) = client
-                                .write_handler_response(&origin, stream.stream_id, response)
-                                .await
-                            {
-                                error!(
-                                    origin,
-                                    stream_id = stream.stream_id,
-                                    error = %write_error,
-                                    "failed to write remote cached error response"
-                                );
-                                let _ = client
-                                    .release_response(&origin, stream.stream_id, &worker_id)
-                                    .await;
-                            }
-                        }
-
-                        let _ = client
-                            .unregister_reader(&origin, stream.stream_id, &worker_id)
-                            .await;
-                        inflight_key
-                    });
-                }
-            }
-        }
+        run_remote_worker_loop(client, self.remote_worker_config(), self).await;
     }
 
     #[cfg(feature = "audio-decoder")]
@@ -1002,6 +724,38 @@ impl WorkerState {
         }
         .instrument(span)
         .await
+    }
+
+    async fn process_local_job(&self, job: LocalJob) -> Result<()> {
+        let service = Arc::clone(job.service());
+        let stream_id = job.stream_id;
+        match self.process_cached_stream(service.clone(), stream_id).await {
+            Ok(()) => Ok(()),
+            Err(error) => {
+                let response = error_response(classify_error(&error), error.to_string());
+                service
+                    .write_handler_response(stream_id, response)
+                    .await
+                    .map_err(anyhow::Error::msg)?;
+                Ok(())
+            }
+        }
+    }
+
+    async fn process_remote_job(&self, job: RemoteJob) -> Result<()> {
+        match self
+            .process_remote_stream(job.client(), &job.origin, job.stream_id)
+            .await
+        {
+            Ok(()) => Ok(()),
+            Err(error) => {
+                let response = error_response(classify_error(&error), error.to_string());
+                job.client()
+                    .write_handler_response(&job.origin, job.stream_id, response)
+                    .await?;
+                Ok(())
+            }
+        }
     }
 
     async fn process_cached_stream(
@@ -1951,7 +1705,12 @@ impl WsTranscriptState {
         if self.fallback_fragments.is_empty() {
             return None;
         }
-        Some(self.fallback_fragments.drain(..).collect::<Vec<_>>().join(" "))
+        Some(
+            self.fallback_fragments
+                .drain(..)
+                .collect::<Vec<_>>()
+                .join(" "),
+        )
     }
 
     fn append_completed_transcript(&mut self, transcript: &str) {
@@ -2024,6 +1783,20 @@ fn preview_absolute_words(
 
 fn seconds_to_samples(seconds: f32) -> usize {
     ((seconds.max(0.0) * ASR_SAMPLE_RATE as f32).round() as usize).max(1)
+}
+
+#[async_trait]
+impl LocalJobProcessor for WorkerState {
+    async fn process(&self, job: LocalJob) -> Result<()> {
+        self.process_local_job(job).await
+    }
+}
+
+#[async_trait]
+impl RemoteJobProcessor for WorkerState {
+    async fn process(&self, job: RemoteJob) -> Result<()> {
+        self.process_remote_job(job).await
+    }
 }
 
 async fn send_json_event<S: JsonEventSink + Send, T: Serialize>(
