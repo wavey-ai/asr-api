@@ -32,7 +32,7 @@ crossbeam-channel = "0.5"
 dotenvy = "0.15"
 futures-util = "0.3"
 gen-id = { git = "https://github.com/wavey-ai/gen-id.git" }
-gpu-worker-upload-response = { git = "https://github.com/wavey-ai/gpu-workers.git", package = "gpu-worker-upload-response", rev = "e7e7843e78bb4d4a91ecd5ad10cfd73ab35da39a" }
+gpu-worker-upload-response = { git = "https://github.com/wavey-ai/gpu-workers.git", package = "gpu-worker-upload-response", rev = "e8b1ca4ccbbb81d03c1ab56c0babfd2aae58dbaa" }
 hyper = { version = "1", features = ["full"] }
 hyper-util = { version = "0.1", features = ["full"] }
 http = "1"

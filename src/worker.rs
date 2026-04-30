@@ -20,7 +20,8 @@ use bytes::Bytes;
 use futures_util::{SinkExt, StreamExt};
 use gpu_worker_upload_response::{
     run_local_worker_loop, run_remote_worker_loop, LocalJob, LocalJobProcessor, LocalWorkerConfig,
-    PipelineSpec, RemoteJob, RemoteJobProcessor, RemoteWorkerConfig, SinkLane, SourceLane,
+    PipelineSpec, RemoteJob, RemoteJobProcessor, RemoteWorkerConfig, SinkLane, SourceFrame,
+    SourceLane,
 };
 use http::{header::CONTENT_TYPE, Request, StatusCode};
 #[cfg(feature = "audio-decoder")]
@@ -37,13 +38,12 @@ use soundkit::audio_pipeline::audio_to_mono_f32;
 use soundkit_decoder::{DecodeOptions, DecodePipeline, DecodePipelineHandle};
 use std::collections::BTreeMap;
 use std::sync::Arc;
-use tokio::time::{interval, Duration};
+use tokio::time::Duration;
 #[cfg(feature = "audio-decoder")]
 use tokio_tungstenite::{tungstenite::Message, WebSocketStream};
 use tracing::{debug, error, info, info_span, trace, Instrument};
 use upload_response::{
-    request_from_stream_headers, RemoteIngressClient, RemoteStageSlot, RequestControl,
-    ResponseCacheWriter, StageTailSlot, TailSlot, UploadResponseService,
+    RemoteIngressClient, RequestControl, ResponseCacheWriter, UploadResponseService,
 };
 use web_service::HandlerResponse;
 #[cfg(feature = "audio-decoder")]
@@ -729,7 +729,7 @@ impl WorkerState {
     async fn process_local_job(&self, job: LocalJob) -> Result<()> {
         let service = Arc::clone(job.service());
         let stream_id = job.stream_id;
-        match self.process_cached_stream(service.clone(), stream_id).await {
+        match self.process_cached_stream(&job).await {
             Ok(()) => Ok(()),
             Err(error) => {
                 let response = error_response(classify_error(&error), error.to_string());
@@ -743,10 +743,7 @@ impl WorkerState {
     }
 
     async fn process_remote_job(&self, job: RemoteJob) -> Result<()> {
-        match self
-            .process_remote_stream(job.client(), &job.origin, job.stream_id)
-            .await
-        {
+        match self.process_remote_stream(&job).await {
             Ok(()) => Ok(()),
             Err(error) => {
                 let response = error_response(classify_error(&error), error.to_string());
@@ -758,14 +755,10 @@ impl WorkerState {
         }
     }
 
-    async fn process_cached_stream(
-        &self,
-        service: Arc<UploadResponseService>,
-        stream_id: u64,
-    ) -> Result<()> {
-        let initial_request = self
-            .read_cached_request_headers(&service, stream_id)
-            .await?;
+    async fn process_cached_stream(&self, job: &LocalJob) -> Result<()> {
+        let service = Arc::clone(job.service());
+        let stream_id = job.stream_id;
+        let initial_request = job.request().await?;
         let request_id = initial_request
             .as_ref()
             .and_then(|request| request_id_from_headers(request.headers()))
@@ -786,13 +779,11 @@ impl WorkerState {
                         stream_id,
                         self.config.upload_response_config().slot_bytes(),
                     );
-                    return self
-                        .stream_cached_upload(service, stream_id, request, &mut writer)
-                        .await;
+                    return self.stream_cached_upload(job, request, &mut writer).await;
                 }
             }
 
-            let (request, prepared) = self.transcribe_cached_upload(&service, stream_id).await?;
+            let (request, prepared) = self.transcribe_cached_upload(job).await?;
             let options = ListenOptions::from_request(&request, &self.config);
             let fallback_transcript = prepared.fallback_fragments.join(" ");
             let payload = build_response(
@@ -820,13 +811,11 @@ impl WorkerState {
         .await
     }
 
-    async fn process_remote_stream(
-        &self,
-        client: &RemoteIngressClient,
-        origin: &str,
-        stream_id: u64,
-    ) -> Result<()> {
-        let initial_request = client.request_headers(origin, stream_id).await?;
+    async fn process_remote_stream(&self, job: &RemoteJob) -> Result<()> {
+        let client = job.client();
+        let origin = job.origin.as_str();
+        let stream_id = job.stream_id;
+        let initial_request = job.request().await?;
         let request_id = initial_request
             .as_ref()
             .and_then(|request| request_id_from_headers(request.headers()))
@@ -849,15 +838,11 @@ impl WorkerState {
                         stream_id,
                         client.slot_bytes(),
                     );
-                    return self
-                        .stream_remote_upload(client, origin, stream_id, request, &mut writer)
-                        .await;
+                    return self.stream_remote_upload(job, request, &mut writer).await;
                 }
             }
 
-            let (request, prepared) = self
-                .transcribe_remote_upload(client, origin, stream_id)
-                .await?;
+            let (request, prepared) = self.transcribe_remote_upload(job).await?;
             let options = ListenOptions::from_request(&request, &self.config);
             let fallback_transcript = prepared.fallback_fragments.join(" ");
             let payload = build_response(
@@ -884,59 +869,14 @@ impl WorkerState {
         .await
     }
 
-    async fn read_cached_request_headers(
-        &self,
-        service: &UploadResponseService,
-        stream_id: u64,
-    ) -> Result<Option<Request<()>>> {
-        match service.tail_request(stream_id, 1).await {
-            Some(TailSlot::Headers(headers)) => Ok(Some(request_from_stream_headers(headers)?)),
-            Some(_) | None => Ok(None),
-        }
-    }
-
-    async fn validate_cached_processing_head(
-        &self,
-        service: &UploadResponseService,
-        stream_id: u64,
-    ) -> Result<()> {
-        match service.tail_stage(stream_id, DECODE_STAGE, 1).await {
-            Some(StageTailSlot::Head(bytes)) => {
-                let head = decode_processing_head(&bytes)?;
-                head.validate_for_asr()
-            }
-            Some(_) | None => Err(anyhow::anyhow!("processing head was missing")),
-        }
-    }
-
-    async fn validate_remote_processing_head(
-        &self,
-        client: &RemoteIngressClient,
-        origin: &str,
-        stream_id: u64,
-    ) -> Result<()> {
-        match client
-            .stage_slot(origin, stream_id, DECODE_STAGE, 1)
-            .await?
-        {
-            Some(RemoteStageSlot::Head(bytes)) => {
-                let head = decode_processing_head(&bytes)?;
-                head.validate_for_asr()
-            }
-            Some(_) | None => Err(anyhow::anyhow!("processing head was missing")),
-        }
-    }
-
     async fn stream_cached_upload(
         &self,
-        service: Arc<UploadResponseService>,
-        stream_id: u64,
+        job: &LocalJob,
         request: Request<()>,
         writer: &mut JsonLineResponseWriter,
     ) -> Result<()> {
-        let mut poll = interval(Duration::from_millis(
-            self.config.upload_response_worker_poll_ms.max(1),
-        ));
+        let poll_interval =
+            Duration::from_millis(self.config.upload_response_worker_poll_ms.max(1));
         let options = ListenOptions::from_request(&request, &self.config);
         let (model_id, model_info) = default_model_info(&options.model);
         let request_id = request_id_from_headers(request.headers())
@@ -944,10 +884,13 @@ impl WorkerState {
             .to_string();
         let mut state = WsTranscriptState::new(options, request_id.clone(), model_id, model_info);
         let mut received_bytes = 0usize;
-        let mut last_slot = 1usize;
+        let mut reader = job.source_reader_from(1, poll_interval);
 
-        self.validate_cached_processing_head(&service, stream_id)
-            .await?;
+        let head = job
+            .stage_head()
+            .await
+            .ok_or_else(|| anyhow::anyhow!("processing head was missing"))?;
+        decode_processing_head(&head)?.validate_for_asr()?;
 
         let metadata = WsMetadataEvent {
             event_type: "Metadata",
@@ -962,49 +905,34 @@ impl WorkerState {
         send_json_event(writer, &metadata).await?;
         info!("started cached streaming transcription");
 
-        'stream: loop {
-            poll.tick().await;
-            let current_last = service
-                .stage_last(stream_id, DECODE_STAGE)
-                .await
-                .ok_or_else(|| anyhow::anyhow!("processing stream {stream_id} disappeared"))?;
-
-            if current_last <= last_slot {
-                continue;
-            }
-
-            for slot_id in (last_slot + 1)..=current_last {
-                match service.tail_stage(stream_id, DECODE_STAGE, slot_id).await {
-                    Some(StageTailSlot::Head(_)) => {}
-                    Some(StageTailSlot::Body(chunk)) => {
-                        received_bytes += chunk.len();
-                        let samples = decode_samples_f32le(&chunk)?;
-                        if !state.speech_started_sent
-                            && !samples.is_empty()
-                            && rms_level(&samples) >= WS_SPEECH_RMS_THRESHOLD
-                        {
-                            state.speech_started_sent = true;
-                            let event = WsSpeechStartedEvent {
-                                event_type: "SpeechStarted",
-                                channel: [0],
-                                timestamp: state.total_duration_secs(),
-                            };
-                            send_json_event(writer, &event).await?;
-                        }
-                        self.process_streaming_samples(&mut state, &samples, writer)
-                            .await?;
+        while let Some(frame) = reader.next_frame().await? {
+            match frame {
+                SourceFrame::StageHead(_) | SourceFrame::RequestHeaders(_) => {}
+                SourceFrame::Body(chunk) => {
+                    received_bytes += chunk.len();
+                    let samples = decode_samples_f32le(&chunk)?;
+                    if !state.speech_started_sent
+                        && !samples.is_empty()
+                        && rms_level(&samples) >= WS_SPEECH_RMS_THRESHOLD
+                    {
+                        state.speech_started_sent = true;
+                        let event = WsSpeechStartedEvent {
+                            event_type: "SpeechStarted",
+                            channel: [0],
+                            timestamp: state.total_duration_secs(),
+                        };
+                        send_json_event(writer, &event).await?;
                     }
-                    Some(StageTailSlot::Control(RequestControl::Finalize)) => {
-                        self.flush_streaming_session(&mut state, false, writer)
-                            .await?;
-                    }
-                    Some(StageTailSlot::Control(RequestControl::KeepAlive)) => {}
-                    Some(StageTailSlot::End) => break 'stream,
-                    None => {}
+                    self.process_streaming_samples(&mut state, &samples, writer)
+                        .await?;
                 }
+                SourceFrame::Control(RequestControl::Finalize) => {
+                    self.flush_streaming_session(&mut state, false, writer)
+                        .await?;
+                }
+                SourceFrame::Control(RequestControl::KeepAlive) => {}
+                SourceFrame::End => break,
             }
-
-            last_slot = current_last;
         }
 
         anyhow::ensure!(
@@ -1024,15 +952,13 @@ impl WorkerState {
 
     async fn stream_remote_upload(
         &self,
-        client: &RemoteIngressClient,
-        origin: &str,
-        stream_id: u64,
+        job: &RemoteJob,
         request: Request<()>,
         writer: &mut JsonLineResponseWriter,
     ) -> Result<()> {
-        let mut poll = interval(Duration::from_millis(
-            self.config.upload_response_worker_poll_ms.max(1),
-        ));
+        let poll_interval =
+            Duration::from_millis(self.config.upload_response_worker_poll_ms.max(1));
+        let origin = job.origin.as_str();
         let options = ListenOptions::from_request(&request, &self.config);
         let (model_id, model_info) = default_model_info(&options.model);
         let request_id = request_id_from_headers(request.headers())
@@ -1040,10 +966,13 @@ impl WorkerState {
             .to_string();
         let mut state = WsTranscriptState::new(options, request_id.clone(), model_id, model_info);
         let mut received_bytes = 0usize;
-        let mut last_slot = 1usize;
+        let mut reader = job.source_reader_from(1, poll_interval);
 
-        self.validate_remote_processing_head(client, origin, stream_id)
-            .await?;
+        let head = job
+            .stage_head()
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("processing head was missing"))?;
+        decode_processing_head(&head)?.validate_for_asr()?;
 
         let metadata = WsMetadataEvent {
             event_type: "Metadata",
@@ -1058,48 +987,34 @@ impl WorkerState {
         send_json_event(writer, &metadata).await?;
         info!(origin, "started remote cached streaming transcription");
 
-        'stream: loop {
-            poll.tick().await;
-            let current_last = client.stage_last(origin, stream_id, DECODE_STAGE).await?;
-            if current_last <= last_slot {
-                continue;
-            }
-
-            for slot_id in (last_slot + 1)..=current_last {
-                match client
-                    .stage_slot(origin, stream_id, DECODE_STAGE, slot_id)
-                    .await?
-                {
-                    Some(RemoteStageSlot::Head(_)) => {}
-                    Some(RemoteStageSlot::Body(chunk)) => {
-                        received_bytes += chunk.len();
-                        let samples = decode_samples_f32le(&chunk)?;
-                        if !state.speech_started_sent
-                            && !samples.is_empty()
-                            && rms_level(&samples) >= WS_SPEECH_RMS_THRESHOLD
-                        {
-                            state.speech_started_sent = true;
-                            let event = WsSpeechStartedEvent {
-                                event_type: "SpeechStarted",
-                                channel: [0],
-                                timestamp: state.total_duration_secs(),
-                            };
-                            send_json_event(writer, &event).await?;
-                        }
-                        self.process_streaming_samples(&mut state, &samples, writer)
-                            .await?;
+        while let Some(frame) = reader.next_frame().await? {
+            match frame {
+                SourceFrame::StageHead(_) | SourceFrame::RequestHeaders(_) => {}
+                SourceFrame::Body(chunk) => {
+                    received_bytes += chunk.len();
+                    let samples = decode_samples_f32le(&chunk)?;
+                    if !state.speech_started_sent
+                        && !samples.is_empty()
+                        && rms_level(&samples) >= WS_SPEECH_RMS_THRESHOLD
+                    {
+                        state.speech_started_sent = true;
+                        let event = WsSpeechStartedEvent {
+                            event_type: "SpeechStarted",
+                            channel: [0],
+                            timestamp: state.total_duration_secs(),
+                        };
+                        send_json_event(writer, &event).await?;
                     }
-                    Some(RemoteStageSlot::Control(RequestControl::Finalize)) => {
-                        self.flush_streaming_session(&mut state, false, writer)
-                            .await?;
-                    }
-                    Some(RemoteStageSlot::Control(RequestControl::KeepAlive)) => {}
-                    Some(RemoteStageSlot::End) => break 'stream,
-                    None => {}
+                    self.process_streaming_samples(&mut state, &samples, writer)
+                        .await?;
                 }
+                SourceFrame::Control(RequestControl::Finalize) => {
+                    self.flush_streaming_session(&mut state, false, writer)
+                        .await?;
+                }
+                SourceFrame::Control(RequestControl::KeepAlive) => {}
+                SourceFrame::End => break,
             }
-
-            last_slot = current_last;
         }
 
         anyhow::ensure!(
@@ -1120,12 +1035,11 @@ impl WorkerState {
 
     async fn transcribe_cached_upload(
         &self,
-        service: &UploadResponseService,
-        stream_id: u64,
+        job: &LocalJob,
     ) -> Result<(Request<()>, PreparedTranscript)> {
-        let mut poll = interval(Duration::from_millis(
-            self.config.upload_response_worker_poll_ms.max(1),
-        ));
+        let stream_id = job.stream_id;
+        let poll_interval =
+            Duration::from_millis(self.config.upload_response_worker_poll_ms.max(1));
         let mut chunker = AudioChunker::new(
             self.config.chunk_samples(),
             self.config.overlap_samples(),
@@ -1138,55 +1052,41 @@ impl WorkerState {
         let mut total_samples = 0usize;
         let mut received_bytes = 0usize;
         let mut hasher = Sha256::new();
-        let mut last_slot = 1usize;
+        let mut reader = job.source_reader_from(1, poll_interval);
 
-        self.validate_cached_processing_head(service, stream_id)
-            .await?;
+        let head = job
+            .stage_head()
+            .await
+            .ok_or_else(|| anyhow::anyhow!("processing head was missing"))?;
+        decode_processing_head(&head)?.validate_for_asr()?;
 
-        'stream: loop {
-            poll.tick().await;
-            let current_last = service
-                .stage_last(stream_id, DECODE_STAGE)
-                .await
-                .ok_or_else(|| anyhow::anyhow!("processing stream {stream_id} disappeared"))?;
-
-            if current_last <= last_slot {
-                continue;
-            }
-
-            for slot_id in (last_slot + 1)..=current_last {
-                match service.tail_stage(stream_id, DECODE_STAGE, slot_id).await {
-                    Some(StageTailSlot::Head(_)) => {}
-                    Some(StageTailSlot::Body(chunk)) => {
-                        received_bytes += chunk.len();
-                        hasher.update(&chunk);
-                        self.push_pcm_bytes(&chunk, &mut chunker, &mut total_samples)?;
-                        self.process_ready_windows(
-                            &mut chunker,
-                            &mut committer,
-                            &mut committed_words,
-                            &mut fallback_fragments,
-                            &mut window_seq,
-                        )
-                        .await?;
-                    }
-                    Some(StageTailSlot::Control(_)) => {}
-                    Some(StageTailSlot::End) => {
-                        break 'stream;
-                    }
-                    None => {}
+        while let Some(frame) = reader.next_frame().await? {
+            match frame {
+                SourceFrame::StageHead(_) | SourceFrame::RequestHeaders(_) => {}
+                SourceFrame::Body(chunk) => {
+                    received_bytes += chunk.len();
+                    hasher.update(&chunk);
+                    self.push_pcm_bytes(&chunk, &mut chunker, &mut total_samples)?;
+                    self.process_ready_windows(
+                        &mut chunker,
+                        &mut committer,
+                        &mut committed_words,
+                        &mut fallback_fragments,
+                        &mut window_seq,
+                    )
+                    .await?;
                 }
+                SourceFrame::Control(_) => {}
+                SourceFrame::End => break,
             }
-
-            last_slot = current_last;
         }
 
         anyhow::ensure!(
             received_bytes > 0,
             "request body did not include audio bytes"
         );
-        let request = self
-            .read_cached_request_headers(service, stream_id)
+        let request = job
+            .request()
             .await?
             .ok_or_else(|| anyhow::anyhow!("request headers were missing"))?;
         self.process_ready_windows(
@@ -1231,13 +1131,12 @@ impl WorkerState {
 
     async fn transcribe_remote_upload(
         &self,
-        client: &RemoteIngressClient,
-        origin: &str,
-        stream_id: u64,
+        job: &RemoteJob,
     ) -> Result<(Request<()>, PreparedTranscript)> {
-        let mut poll = interval(Duration::from_millis(
-            self.config.upload_response_worker_poll_ms.max(1),
-        ));
+        let origin = job.origin.as_str();
+        let stream_id = job.stream_id;
+        let poll_interval =
+            Duration::from_millis(self.config.upload_response_worker_poll_ms.max(1));
         let mut chunker = AudioChunker::new(
             self.config.chunk_samples(),
             self.config.overlap_samples(),
@@ -1250,54 +1149,41 @@ impl WorkerState {
         let mut total_samples = 0usize;
         let mut received_bytes = 0usize;
         let mut hasher = Sha256::new();
-        let mut last_slot = 1usize;
+        let mut reader = job.source_reader_from(1, poll_interval);
 
-        self.validate_remote_processing_head(client, origin, stream_id)
-            .await?;
+        let head = job
+            .stage_head()
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("processing head was missing"))?;
+        decode_processing_head(&head)?.validate_for_asr()?;
 
-        'stream: loop {
-            poll.tick().await;
-            let current_last = client.stage_last(origin, stream_id, DECODE_STAGE).await?;
-            if current_last <= last_slot {
-                continue;
-            }
-
-            for slot_id in (last_slot + 1)..=current_last {
-                match client
-                    .stage_slot(origin, stream_id, DECODE_STAGE, slot_id)
-                    .await?
-                {
-                    Some(RemoteStageSlot::Head(_)) => {}
-                    Some(RemoteStageSlot::Body(chunk)) => {
-                        received_bytes += chunk.len();
-                        hasher.update(&chunk);
-                        self.push_pcm_bytes(&chunk, &mut chunker, &mut total_samples)?;
-                        self.process_ready_windows(
-                            &mut chunker,
-                            &mut committer,
-                            &mut committed_words,
-                            &mut fallback_fragments,
-                            &mut window_seq,
-                        )
-                        .await?;
-                    }
-                    Some(RemoteStageSlot::Control(_)) => {}
-                    Some(RemoteStageSlot::End) => {
-                        break 'stream;
-                    }
-                    None => {}
+        while let Some(frame) = reader.next_frame().await? {
+            match frame {
+                SourceFrame::StageHead(_) | SourceFrame::RequestHeaders(_) => {}
+                SourceFrame::Body(chunk) => {
+                    received_bytes += chunk.len();
+                    hasher.update(&chunk);
+                    self.push_pcm_bytes(&chunk, &mut chunker, &mut total_samples)?;
+                    self.process_ready_windows(
+                        &mut chunker,
+                        &mut committer,
+                        &mut committed_words,
+                        &mut fallback_fragments,
+                        &mut window_seq,
+                    )
+                    .await?;
                 }
+                SourceFrame::Control(_) => {}
+                SourceFrame::End => break,
             }
-
-            last_slot = current_last;
         }
 
         anyhow::ensure!(
             received_bytes > 0,
             "request body did not include audio bytes"
         );
-        let request = client
-            .request_headers(origin, stream_id)
+        let request = job
+            .request()
             .await?
             .ok_or_else(|| anyhow::anyhow!("request headers were missing"))?;
         self.process_ready_windows(
