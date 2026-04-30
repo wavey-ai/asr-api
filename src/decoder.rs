@@ -9,16 +9,15 @@ use av_api::linear16::Linear16PcmStream;
 use bytes::Bytes;
 use gpu_worker_upload_response::{
     run_local_worker_loop, run_remote_worker_loop, LocalJob, LocalJobProcessor, LocalWorkerConfig,
-    PipelineSpec, RemoteJob, RemoteJobProcessor, RemoteWorkerConfig, SinkLane, SourceLane,
+    PipelineSpec, RemoteJob, RemoteJobProcessor, RemoteWorkerConfig, SinkLane, SourceFrame,
+    SourceLane,
 };
 use soundkit::audio_pipeline::audio_to_mono_f32;
 use soundkit_decoder::{DecodeOptions, DecodePipeline, DecodePipelineHandle};
 use std::sync::Arc;
-use tokio::time::{interval, Duration};
+use tokio::time::Duration;
 use tracing::{error, info, info_span, Instrument};
-use upload_response::{
-    RemoteIngressClient, RemoteRequestSlot, RequestControl, TailSlot, UploadResponseService,
-};
+use upload_response::{RemoteIngressClient, RequestControl, UploadResponseService};
 
 #[derive(Clone)]
 pub struct DecoderState {
@@ -123,8 +122,7 @@ impl DecoderState {
 
         async move {
             let mut sink = LocalProcessingSink::new(job.clone());
-            self.decode_cached_request(job.service().as_ref(), job.stream_id, &request, &mut sink)
-                .await
+            self.decode_cached_request(&job, &request, &mut sink).await
         }
         .instrument(span)
         .await
@@ -147,60 +145,38 @@ impl DecoderState {
 
         async move {
             let mut sink = RemoteProcessingSink::new(job.clone());
-            self.decode_remote_request(
-                job.client(),
-                &job.origin,
-                job.stream_id,
-                &request,
-                &mut sink,
-            )
-            .await
+            self.decode_remote_request(&job, &request, &mut sink).await
         }
         .instrument(span)
         .await
     }
     async fn decode_cached_request<S: ProcessingSink + Send>(
         &self,
-        service: &UploadResponseService,
-        stream_id: u64,
+        job: &LocalJob,
         request: &http::Request<()>,
         sink: &mut S,
     ) -> Result<()> {
-        let mut poll = interval(Duration::from_millis(
-            self.config.upload_response_worker_poll_ms.max(1),
-        ));
-        let mut last_slot = 0usize;
+        let mut reader = job.source_reader_from(
+            1,
+            Duration::from_millis(self.config.upload_response_worker_poll_ms.max(1)),
+        );
         let mut received_bytes = 0usize;
         let mut decoder = RequestDecoder::from_request(request, &self.config)?;
         sink.write_head(processing_head_bytes()?).await?;
         info!("started cached decode stream");
 
-        'stream: loop {
-            poll.tick().await;
-            let current_last = service
-                .request_last(stream_id)
-                .ok_or_else(|| anyhow::anyhow!("request stream {stream_id} disappeared"))?;
-
-            if current_last <= last_slot {
-                continue;
-            }
-
-            for slot_id in (last_slot + 1)..=current_last {
-                match service.tail_request(stream_id, slot_id).await {
-                    Some(TailSlot::Headers(_)) => {}
-                    Some(TailSlot::Body(chunk)) => {
-                        received_bytes += chunk.len();
-                        self.decode_request_chunk(&mut decoder, chunk, sink).await?;
-                    }
-                    Some(TailSlot::Control(control)) => {
-                        sink.append_control(control).await?;
-                    }
-                    Some(TailSlot::End) => break 'stream,
-                    None => {}
+        while let Some(frame) = reader.next_frame().await? {
+            match frame {
+                SourceFrame::RequestHeaders(_) | SourceFrame::StageHead(_) => {}
+                SourceFrame::Body(chunk) => {
+                    received_bytes += chunk.len();
+                    self.decode_request_chunk(&mut decoder, chunk, sink).await?;
                 }
+                SourceFrame::Control(control) => {
+                    sink.append_control(control).await?;
+                }
+                SourceFrame::End => break,
             }
-
-            last_slot = current_last;
         }
 
         anyhow::ensure!(
@@ -216,44 +192,31 @@ impl DecoderState {
 
     async fn decode_remote_request<S: ProcessingSink + Send>(
         &self,
-        client: &RemoteIngressClient,
-        origin: &str,
-        stream_id: u64,
+        job: &RemoteJob,
         request: &http::Request<()>,
         sink: &mut S,
     ) -> Result<()> {
-        let mut poll = interval(Duration::from_millis(
-            self.config.upload_response_worker_poll_ms.max(1),
-        ));
-        let mut last_slot = 0usize;
+        let mut reader = job.source_reader_from(
+            1,
+            Duration::from_millis(self.config.upload_response_worker_poll_ms.max(1)),
+        );
         let mut received_bytes = 0usize;
         let mut decoder = RequestDecoder::from_request(request, &self.config)?;
         sink.write_head(processing_head_bytes()?).await?;
-        info!(origin, "started remote decode stream");
+        info!(origin = %job.origin, "started remote decode stream");
 
-        'stream: loop {
-            poll.tick().await;
-            let current_last = client.request_last(origin, stream_id).await?;
-            if current_last <= last_slot {
-                continue;
-            }
-
-            for slot_id in (last_slot + 1)..=current_last {
-                match client.request_slot(origin, stream_id, slot_id).await? {
-                    Some(RemoteRequestSlot::Headers(_)) => {}
-                    Some(RemoteRequestSlot::Body(chunk)) => {
-                        received_bytes += chunk.len();
-                        self.decode_request_chunk(&mut decoder, chunk, sink).await?;
-                    }
-                    Some(RemoteRequestSlot::Control(control)) => {
-                        sink.append_control(control).await?;
-                    }
-                    Some(RemoteRequestSlot::End) => break 'stream,
-                    None => {}
+        while let Some(frame) = reader.next_frame().await? {
+            match frame {
+                SourceFrame::RequestHeaders(_) | SourceFrame::StageHead(_) => {}
+                SourceFrame::Body(chunk) => {
+                    received_bytes += chunk.len();
+                    self.decode_request_chunk(&mut decoder, chunk, sink).await?;
                 }
+                SourceFrame::Control(control) => {
+                    sink.append_control(control).await?;
+                }
+                SourceFrame::End => break,
             }
-
-            last_slot = current_last;
         }
 
         anyhow::ensure!(
@@ -263,7 +226,7 @@ impl DecoderState {
 
         self.finish_request_decoder(&mut decoder, sink).await?;
         sink.finish().await?;
-        info!(origin, received_bytes, "finished remote decode stream");
+        info!(origin = %job.origin, received_bytes, "finished remote decode stream");
         Ok(())
     }
 

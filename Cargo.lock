@@ -1264,7 +1264,7 @@ checksum = "0cc23270f6e1808e30a928bdc84dea0b9b4136a8bc82338574f23baf47bbd280"
 [[package]]
 name = "gpu-worker-upload-response"
 version = "0.1.0"
-source = "git+https://github.com/wavey-ai/gpu-workers.git?rev=e2f256dd64d2bc371185a917338bf937681fd5f5#e2f256dd64d2bc371185a917338bf937681fd5f5"
+source = "git+https://github.com/wavey-ai/gpu-workers.git?rev=e7e7843e78bb4d4a91ecd5ad10cfd73ab35da39a#e7e7843e78bb4d4a91ecd5ad10cfd73ab35da39a"
 dependencies = [
  "anyhow",
  "async-trait",
