@@ -167,6 +167,7 @@ dependencies = [
  "dotenvy",
  "futures-util",
  "gen-id 0.3.0 (git+https://github.com/wavey-ai/gen-id.git)",
+ "gpu-worker-upload-response",
  "http",
  "http-pack",
  "hyper",
@@ -185,9 +186,9 @@ dependencies = [
  "tokio-tungstenite",
  "tracing",
  "tracing-subscriber",
- "upload-response",
+ "upload-response 0.1.0 (git+https://github.com/wavey-ai/web-services.git?rev=b5d4a2ea04181cd98ffebd07cd55d43c4963aea0)",
  "url",
- "web-service",
+ "web-service 0.1.0 (git+https://github.com/wavey-ai/web-services.git?rev=b5d4a2ea04181cd98ffebd07cd55d43c4963aea0)",
 ]
 
 [[package]]
@@ -269,7 +270,7 @@ dependencies = [
  "http",
  "soundkit",
  "soundkit-decoder",
- "upload-response",
+ "upload-response 0.1.0 (git+https://github.com/wavey-ai/web-services.git)",
 ]
 
 [[package]]
@@ -1259,6 +1260,20 @@ name = "glob"
 version = "0.3.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0cc23270f6e1808e30a928bdc84dea0b9b4136a8bc82338574f23baf47bbd280"
+
+[[package]]
+name = "gpu-worker-upload-response"
+version = "0.1.0"
+source = "git+https://github.com/wavey-ai/gpu-workers.git?rev=93ce037a043dfcbe25c4861be62012610f4c07e0#93ce037a043dfcbe25c4861be62012610f4c07e0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "bytes",
+ "http-pack",
+ "tokio",
+ "tracing",
+ "upload-response 0.1.0 (git+https://github.com/wavey-ai/web-services.git?rev=b5d4a2ea04181cd98ffebd07cd55d43c4963aea0)",
+]
 
 [[package]]
 name = "h2"
@@ -4070,6 +4085,32 @@ checksum = "6d49784317cd0d1ee7ec5c716dd598ec5b4483ea832a2dced265471cc0f690ae"
 [[package]]
 name = "upload-response"
 version = "0.1.0"
+source = "git+https://github.com/wavey-ai/web-services.git?rev=b5d4a2ea04181cd98ffebd07cd55d43c4963aea0#b5d4a2ea04181cd98ffebd07cd55d43c4963aea0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "bytes",
+ "futures-util",
+ "http",
+ "http-pack",
+ "hyper",
+ "hyper-util",
+ "playlists",
+ "reqwest",
+ "rustls 0.23.38",
+ "rustls-pemfile",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tokio-rustls",
+ "tokio-tungstenite",
+ "tracing",
+ "web-service 0.1.0 (git+https://github.com/wavey-ai/web-services.git?rev=b5d4a2ea04181cd98ffebd07cd55d43c4963aea0)",
+]
+
+[[package]]
+name = "upload-response"
+version = "0.1.0"
 source = "git+https://github.com/wavey-ai/web-services.git#99e56891d3d8ba810455e2d51f3bfa78a71018a0"
 dependencies = [
  "anyhow",
@@ -4090,7 +4131,7 @@ dependencies = [
  "tokio-rustls",
  "tokio-tungstenite",
  "tracing",
- "web-service",
+ "web-service 0.1.0 (git+https://github.com/wavey-ai/web-services.git)",
 ]
 
 [[package]]
@@ -4310,6 +4351,50 @@ dependencies = [
  "hashbrown 0.15.5",
  "indexmap",
  "semver",
+]
+
+[[package]]
+name = "web-service"
+version = "0.1.0"
+source = "git+https://github.com/wavey-ai/web-services.git?rev=b5d4a2ea04181cd98ffebd07cd55d43c4963aea0#b5d4a2ea04181cd98ffebd07cd55d43c4963aea0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "base64 0.22.1",
+ "bytes",
+ "dotenvy",
+ "env_logger",
+ "futures-util",
+ "gen-id 0.3.0 (git+https://github.com/wavey-ai/gen-id.git)",
+ "h2",
+ "h3",
+ "h3-datagram",
+ "h3-quinn",
+ "h3-webtransport",
+ "http",
+ "http-body-util",
+ "http-pack",
+ "hyper",
+ "hyper-rustls",
+ "hyper-util",
+ "playlists",
+ "quinn",
+ "regex",
+ "rustls 0.23.38",
+ "rustls-pemfile",
+ "serde",
+ "serde_json",
+ "structopt",
+ "thiserror 2.0.18",
+ "tls-helpers 0.2.0 (git+https://github.com/wavey-ai/tls-helpers.git)",
+ "tokio",
+ "tokio-tungstenite",
+ "tracing",
+ "tracing-subscriber",
+ "url",
+ "webpki-roots 0.26.11",
+ "xmpegts",
+ "xxhash-rust",
 ]
 
 [[package]]

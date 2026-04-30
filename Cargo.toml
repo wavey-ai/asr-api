@@ -32,6 +32,7 @@ crossbeam-channel = "0.5"
 dotenvy = "0.15"
 futures-util = "0.3"
 gen-id = { git = "https://github.com/wavey-ai/gen-id.git" }
+gpu-worker-upload-response = { git = "https://github.com/wavey-ai/gpu-workers.git", rev = "93ce037a043dfcbe25c4861be62012610f4c07e0" }
 hyper = { version = "1", features = ["full"] }
 hyper-util = { version = "0.1", features = ["full"] }
 http = "1"
@@ -61,6 +62,6 @@ tokio-tungstenite = { version = "0.27", features = ["rustls-tls-webpki-roots"] }
 tokenizers = { version = "0.22.2", default-features = false, features = ["onig"], optional = true }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "json"] }
-upload-response = { git = "https://github.com/wavey-ai/web-services.git", package = "upload-response" }
+upload-response = { git = "https://github.com/wavey-ai/web-services.git", package = "upload-response", rev = "b5d4a2ea04181cd98ffebd07cd55d43c4963aea0" }
 url = "2.5"
-web-service = { git = "https://github.com/wavey-ai/web-services.git", package = "web-service" }
+web-service = { git = "https://github.com/wavey-ai/web-services.git", package = "web-service", rev = "b5d4a2ea04181cd98ffebd07cd55d43c4963aea0" }

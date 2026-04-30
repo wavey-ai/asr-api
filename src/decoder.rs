@@ -7,6 +7,10 @@ use crate::processing::{
 use anyhow::Result;
 use av_api::linear16::Linear16PcmStream;
 use bytes::Bytes;
+use gpu_worker_upload_response::{
+    run_local_worker_loop, LocalJob, LocalJobProcessor, LocalWorkerConfig, PipelineSpec, SinkLane,
+    SourceLane,
+};
 use soundkit::audio_pipeline::audio_to_mono_f32;
 use soundkit_decoder::{DecodeOptions, DecodePipeline, DecodePipelineHandle};
 use std::collections::HashSet;
@@ -55,19 +59,6 @@ impl DecoderState {
         }
     }
 
-    async fn publish_local_worker_capacity(
-        &self,
-        service: &UploadResponseService,
-        inflight: usize,
-    ) {
-        service
-            .upsert_worker_heartbeat(
-                &self.config.upload_response_worker_id,
-                self.worker_heartbeat(inflight),
-            )
-            .await;
-    }
-
     async fn publish_remote_worker_capacity(
         &self,
         client: &RemoteIngressClient,
@@ -91,103 +82,27 @@ impl DecoderState {
     }
 
     async fn run_cache_worker(self: Arc<Self>, service: Arc<UploadResponseService>) {
-        info!(
-            worker_id = %self.config.upload_response_worker_id,
-            max_inflight = self.config.upload_response_max_inflight,
-            poll_ms = self.config.upload_response_worker_poll_ms,
-            heartbeat_ms = self.config.upload_response_worker_heartbeat_interval_ms,
-            "local decode worker started"
+        run_local_worker_loop(service, self.local_worker_config(), self).await;
+    }
+
+    fn local_worker_config(&self) -> LocalWorkerConfig {
+        let mut config = LocalWorkerConfig::new(
+            self.config.upload_response_worker_id.clone(),
+            PipelineSpec {
+                source: SourceLane::Request,
+                sink: SinkLane::Stage(DECODE_STAGE.to_string()),
+            },
         );
-        let mut poll = interval(Duration::from_millis(
-            self.config.upload_response_worker_poll_ms.max(1),
-        ));
-        let mut heartbeat = interval(Duration::from_millis(
+        config.heartbeat_stage = "decode".to_string();
+        config.max_inflight = self.config.upload_response_max_inflight;
+        config.poll_interval =
+            Duration::from_millis(self.config.upload_response_worker_poll_ms.max(1));
+        config.heartbeat_interval = Duration::from_millis(
             self.config
                 .upload_response_worker_heartbeat_interval_ms
                 .max(1),
-        ));
-        let mut inflight = HashSet::new();
-        let mut tasks = JoinSet::new();
-        let mut send_heartbeat = true;
-
-        loop {
-            tokio::select! {
-                _ = poll.tick() => {}
-                _ = heartbeat.tick() => {
-                    send_heartbeat = true;
-                }
-            }
-
-            while let Some(joined) = tasks.try_join_next() {
-                match joined {
-                    Ok(stream_id) => {
-                        inflight.remove(&stream_id);
-                        send_heartbeat = true;
-                    }
-                    Err(error) => {
-                        error!(%error, "decode worker task failed");
-                    }
-                }
-            }
-
-            if send_heartbeat {
-                self.publish_local_worker_capacity(&service, inflight.len())
-                    .await;
-                send_heartbeat = false;
-            }
-
-            if inflight.len() >= self.config.upload_response_max_inflight {
-                continue;
-            }
-
-            for stream in service.active_streams().await {
-                if inflight.len() >= self.config.upload_response_max_inflight {
-                    break;
-                }
-                if inflight.contains(&stream.stream_id)
-                    || stream.request_last == 0
-                    || stream.stage_last(DECODE_STAGE) != 0
-                    || stream.stage_owner(DECODE_STAGE).is_some()
-                {
-                    continue;
-                }
-
-                if !service
-                    .try_claim_stage(
-                        stream.stream_id,
-                        DECODE_STAGE,
-                        &self.config.upload_response_worker_id,
-                    )
-                    .await
-                {
-                    continue;
-                }
-
-                let _ = service
-                    .register_reader(stream.stream_id, &self.config.upload_response_worker_id)
-                    .await;
-
-                inflight.insert(stream.stream_id);
-                send_heartbeat = true;
-                let service = service.clone();
-                let worker = self.clone();
-                let worker_id = self.config.upload_response_worker_id.clone();
-                tasks.spawn(async move {
-                    let stream_id = stream.stream_id;
-                    let result = worker
-                        .process_cached_stream(service.clone(), stream_id)
-                        .await;
-                    if let Err(error) = result {
-                        error!(stream_id, error = %error, "cached decode failed");
-                    }
-                    let _ = service
-                        .release_stage(stream_id, DECODE_STAGE, &worker_id)
-                        .await;
-                    let _ = service.unregister_reader(stream_id, &worker_id).await;
-                    stream_id
-                });
-            }
-        }
+        );
+        config
     }
 
     async fn run_remote_cache_worker(self: Arc<Self>) {
@@ -373,30 +288,24 @@ impl DecoderState {
         }
     }
 
-    async fn process_cached_stream(
-        &self,
-        service: Arc<UploadResponseService>,
-        stream_id: u64,
-    ) -> Result<()> {
-        let request = self
-            .read_cached_request_headers(&service, stream_id)
-            .await?;
+    async fn process_local_job(&self, job: LocalJob) -> Result<()> {
+        let request = request_from_stream_headers(
+            job.request_headers()
+                .await
+                .ok_or_else(|| anyhow::anyhow!("request headers were missing"))?,
+        )?;
         let request_id = request_id_from_headers(request.headers()).unwrap_or_else(next_request_id);
         let span = info_span!(
             "decoder_cached_stream",
             request_id,
-            stream_id,
-            worker_id = %self.config.upload_response_worker_id,
+            stream_id = job.stream_id,
+            worker_id = %job.worker_id(),
             source = "local_cache",
         );
 
         async move {
-            let mut sink = LocalProcessingSink::new(
-                service.clone(),
-                stream_id,
-                self.config.upload_response_config().slot_bytes(),
-            );
-            self.decode_cached_request(&service, stream_id, &request, &mut sink)
+            let mut sink = LocalProcessingSink::new(job.clone());
+            self.decode_cached_request(job.service().as_ref(), job.stream_id, &request, &mut sink)
                 .await
         }
         .instrument(span)
@@ -431,18 +340,6 @@ impl DecoderState {
         .instrument(span)
         .await
     }
-
-    async fn read_cached_request_headers(
-        &self,
-        service: &UploadResponseService,
-        stream_id: u64,
-    ) -> Result<http::Request<()>> {
-        match service.tail_request(stream_id, 1).await {
-            Some(TailSlot::Headers(headers)) => request_from_stream_headers(headers),
-            Some(_) | None => Err(anyhow::anyhow!("request headers were missing")),
-        }
-    }
-
     async fn decode_cached_request<S: ProcessingSink + Send>(
         &self,
         service: &UploadResponseService,
@@ -681,17 +578,15 @@ trait ProcessingSink {
 }
 
 struct LocalProcessingSink {
-    service: Arc<UploadResponseService>,
-    stream_id: u64,
+    job: LocalJob,
     slot_bytes: usize,
 }
 
 impl LocalProcessingSink {
-    fn new(service: Arc<UploadResponseService>, stream_id: u64, slot_bytes: usize) -> Self {
+    fn new(job: LocalJob) -> Self {
         Self {
-            service,
-            stream_id,
-            slot_bytes: slot_bytes.max(1),
+            slot_bytes: job.slot_bytes().max(1),
+            job,
         }
     }
 }
@@ -699,8 +594,8 @@ impl LocalProcessingSink {
 #[async_trait::async_trait]
 impl ProcessingSink for LocalProcessingSink {
     async fn write_head(&mut self, head: Bytes) -> Result<()> {
-        self.service
-            .write_stage_head(self.stream_id, DECODE_STAGE, head)
+        self.job
+            .write_stage_head(head)
             .await
             .map_err(anyhow::Error::msg)
     }
@@ -710,8 +605,8 @@ impl ProcessingSink for LocalProcessingSink {
             if chunk.is_empty() {
                 continue;
             }
-            self.service
-                .append_stage_body(self.stream_id, DECODE_STAGE, Bytes::copy_from_slice(chunk))
+            self.job
+                .append_body(Bytes::copy_from_slice(chunk))
                 .await
                 .map_err(anyhow::Error::msg)?;
         }
@@ -719,17 +614,14 @@ impl ProcessingSink for LocalProcessingSink {
     }
 
     async fn append_control(&mut self, control: RequestControl) -> Result<()> {
-        self.service
-            .append_stage_control(self.stream_id, DECODE_STAGE, control)
+        self.job
+            .append_control(control)
             .await
             .map_err(anyhow::Error::msg)
     }
 
     async fn finish(&mut self) -> Result<()> {
-        self.service
-            .end_stage(self.stream_id, DECODE_STAGE)
-            .await
-            .map_err(anyhow::Error::msg)
+        self.job.end().await.map_err(anyhow::Error::msg)
     }
 }
 
@@ -778,4 +670,11 @@ impl ProcessingSink for RemoteProcessingSink {
 
 fn processing_head_bytes() -> Result<Bytes> {
     encode_processing_head(&ProcessingHead::pcm_mono_f32())
+}
+
+#[async_trait::async_trait]
+impl LocalJobProcessor for DecoderState {
+    async fn process(&self, job: LocalJob) -> Result<()> {
+        self.process_local_job(job).await
+    }
 }
