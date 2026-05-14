@@ -113,7 +113,7 @@ write_manifest() {
     printf 'ASR_COHERE_TRT_FP16\t%s\n' "${ASR_COHERE_TRT_FP16:-}"
     printf 'ORT_DYLIB_PATH\t%s\n' "${ORT_DYLIB_PATH:-}"
     if command -v nvidia-smi >/dev/null 2>&1; then
-      nvidia-smi --query-gpu=name,driver_version,cuda_version --format=csv,noheader 2>/dev/null |
+      nvidia-smi --query-gpu=name,driver_version --format=csv,noheader 2>/dev/null |
         while IFS= read -r line; do
           printf 'nvidia_smi\t%s\n' "$line"
         done
