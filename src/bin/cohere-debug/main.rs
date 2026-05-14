@@ -72,10 +72,7 @@ async fn main() -> Result<()> {
     std::process::exit(0);
 }
 
-async fn send_all(
-    decoder: &mut soundkit_decoder::DecodePipelineHandle,
-    data: Bytes,
-) -> Result<()> {
+async fn send_all(decoder: &mut soundkit_decoder::DecodePipelineHandle, data: Bytes) -> Result<()> {
     loop {
         match decoder.send(data.clone()) {
             Ok(()) => return Ok(()),

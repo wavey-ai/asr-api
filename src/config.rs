@@ -315,9 +315,19 @@ impl AppConfig {
                 }
                 AsrModelProvider::Cohere => {
                     let force_cpu = env_var_truthy("ASR_COHERE_FORCE_CPU");
+                    let coreml = env_var_truthy("ASR_COHERE_COREML")
+                        || env::var("ASR_COHERE_EXECUTION_PROVIDER")
+                            .ok()
+                            .map(|value| {
+                                matches!(
+                                    value.trim().to_ascii_lowercase().as_str(),
+                                    "coreml" | "metal" | "apple"
+                                )
+                            })
+                            .unwrap_or(false);
                     anyhow::ensure!(
-                        force_cpu || !self.device_ids.is_empty(),
-                        "Cohere backend requires at least one GPU device id; set ASR_DEVICE_IDS or use ASR_COHERE_FORCE_CPU=true for explicit CPU compare mode"
+                        force_cpu || coreml || !self.device_ids.is_empty(),
+                        "Cohere backend requires at least one GPU device id; set ASR_DEVICE_IDS, ASR_COHERE_COREML=true for Apple GPU/CoreML, or ASR_COHERE_FORCE_CPU=true for explicit CPU compare mode"
                     );
                     ensure_all_exists(
                         model_dir,
@@ -336,7 +346,9 @@ impl AppConfig {
                         ],
                     )?;
                 }
-                AsrModelProvider::Auto => unreachable!("model provider should resolve before validation"),
+                AsrModelProvider::Auto => {
+                    unreachable!("model provider should resolve before validation")
+                }
             }
 
             if !matches!(provider, AsrModelProvider::Cohere) {

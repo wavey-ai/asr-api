@@ -1,7 +1,0 @@
-apiVersion: v1
-kind: Namespace
-metadata:
-  name: asr-api
-  labels:
-    app.kubernetes.io/name: asr-api
-    app.kubernetes.io/part-of: asr-api

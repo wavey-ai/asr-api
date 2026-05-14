@@ -539,8 +539,7 @@ fn worker_role_hint(worker_id: &str) -> Option<WorkerRoleHint> {
     if worker_id.contains("decode") || worker_id.contains("decoder") {
         return Some(WorkerRoleHint::Processing);
     }
-    if worker_id.contains("response") || worker_id.contains("gpu") || worker_id.contains("worker")
-    {
+    if worker_id.contains("response") || worker_id.contains("gpu") || worker_id.contains("worker") {
         return Some(WorkerRoleHint::Response);
     }
     None

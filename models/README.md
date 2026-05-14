@@ -32,5 +32,13 @@ The sync helper writes a local state file and skips the download when the
 destination already matches the bucket objects for that model. Treat it as a
 seed/update step, not something every code deploy needs to rerun.
 
+TensorRT engine caches are stored under model-specific cache prefixes, for
+example:
+
+- `s3://wavey.ai/models/cohere-transcribe-03-2026/trt-cache/rtx4000-ada-ort1.23.2-trt10-fp16-all-35s/`
+
+Use `scripts/sync-trt-cache.sh` to pull or push a cache from a compatible GPU
+host. Do not commit engine-cache payloads to this repo.
+
 The repo ignores local payloads under `models/`, so downloaded bundles stay out
 of Git.

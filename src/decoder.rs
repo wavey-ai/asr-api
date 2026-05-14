@@ -7,7 +7,7 @@ use crate::processing::{
 use anyhow::Result;
 use av_api::linear16::Linear16PcmStream;
 use bytes::Bytes;
-use gpu_worker_upload_response::{
+use gpu_worker::upload_response::{
     run_local_worker_loop, run_remote_worker_loop, LocalJob, LocalJobProcessor, LocalWorkerConfig,
     PipelineSpec, RemoteJob, RemoteJobProcessor, RemoteWorkerConfig, SinkLane, SourceFrame,
     SourceLane,

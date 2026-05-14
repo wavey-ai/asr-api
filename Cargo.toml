@@ -3,6 +3,11 @@ name = "asr-api"
 version = "0.1.0"
 edition = "2021"
 
+[[bin]]
+name = "cohere-debug"
+path = "src/bin/cohere-debug/main.rs"
+required-features = ["cohere-backend", "audio-decoder"]
+
 [features]
 default = ["nemo-backend", "cohere-backend", "audio-decoder"]
 gpu-backend = []
@@ -32,7 +37,7 @@ crossbeam-channel = "0.5"
 dotenvy = "0.15"
 futures-util = "0.3"
 gen-id = { git = "https://github.com/wavey-ai/gen-id.git" }
-gpu-worker-upload-response = { git = "https://github.com/wavey-ai/gpu-workers.git", package = "gpu-worker-upload-response", rev = "e8b1ca4ccbbb81d03c1ab56c0babfd2aae58dbaa" }
+gpu-worker = { path = "../gpu-workers/gpu-worker", features = ["upload-response"] }
 hyper = { version = "1", features = ["full"] }
 hyper-util = { version = "0.1", features = ["full"] }
 http = "1"
@@ -44,12 +49,10 @@ ort = { git = "https://github.com/pykeio/ort.git", rev = "8724e89ff005ebef4339d7
     "ndarray",
     "tracing",
     "load-dynamic",
-    "download-binaries",
-    "tls-native",
-    "copy-dylibs",
-    "api-24",
+    "api-23",
     "tensorrt",
     "cuda",
+    "coreml",
 ], optional = true }
 rustfft = { version = "6.2", optional = true }
 serde = { version = "1.0", features = ["derive"] }
@@ -62,6 +65,10 @@ tokio-tungstenite = { version = "0.27", features = ["rustls-tls-webpki-roots"] }
 tokenizers = { version = "0.22.2", default-features = false, features = ["onig"], optional = true }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "json"] }
-upload-response = { git = "https://github.com/wavey-ai/web-services.git", package = "upload-response", rev = "b5d4a2ea04181cd98ffebd07cd55d43c4963aea0" }
+upload-response = { path = "../web-services/upload-response" }
 url = "2.5"
-web-service = { git = "https://github.com/wavey-ai/web-services.git", package = "web-service", rev = "b5d4a2ea04181cd98ffebd07cd55d43c4963aea0" }
+web-service = { path = "../web-services/web-service" }
+
+[patch."https://github.com/wavey-ai/web-services.git"]
+upload-response = { path = "../web-services/upload-response" }
+web-service = { path = "../web-services/web-service" }

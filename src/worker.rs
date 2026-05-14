@@ -18,7 +18,7 @@ use av_api::linear16::Linear16PcmStream;
 use bytes::Bytes;
 #[cfg(feature = "audio-decoder")]
 use futures_util::{SinkExt, StreamExt};
-use gpu_worker_upload_response::{
+use gpu_worker::upload_response::{
     run_local_worker_loop, run_remote_worker_loop, LocalJob, LocalJobProcessor, LocalWorkerConfig,
     PipelineSpec, RemoteJob, RemoteJobProcessor, RemoteWorkerConfig, SinkLane, SourceFrame,
     SourceLane,
@@ -69,6 +69,8 @@ const WS_INTERIM_MIN_SECONDS: f32 = 0.6;
 const WS_INTERIM_INTERVAL_MS: u64 = 400;
 const WS_SPEECH_RMS_THRESHOLD: f32 = 0.01;
 const WS_WORD_DEDUPE_EPSILON_MS: u64 = 25;
+const FALLBACK_OVERLAP_WORD_LIMIT: usize = 24;
+const FALLBACK_MIN_OVERLAP_WORDS: usize = 2;
 
 #[derive(Clone)]
 #[cfg(feature = "audio-decoder")]
@@ -705,7 +707,7 @@ impl WorkerState {
             reject_json_requests(&req)?;
             let options = ListenOptions::from_request(&req, &self.config);
             let prepared = self.transcribe_upload(body).await?;
-            let fallback_transcript = prepared.fallback_fragments.join(" ");
+            let fallback_transcript = merge_fallback_fragments(&prepared.fallback_fragments);
             let payload = build_response(
                 request_id.to_string(),
                 prepared.sha256,
@@ -785,7 +787,7 @@ impl WorkerState {
 
             let (request, prepared) = self.transcribe_cached_upload(job).await?;
             let options = ListenOptions::from_request(&request, &self.config);
-            let fallback_transcript = prepared.fallback_fragments.join(" ");
+            let fallback_transcript = merge_fallback_fragments(&prepared.fallback_fragments);
             let payload = build_response(
                 request_id.to_string(),
                 prepared.sha256,
@@ -844,7 +846,7 @@ impl WorkerState {
 
             let (request, prepared) = self.transcribe_remote_upload(job).await?;
             let options = ListenOptions::from_request(&request, &self.config);
-            let fallback_transcript = prepared.fallback_fragments.join(" ");
+            let fallback_transcript = merge_fallback_fragments(&prepared.fallback_fragments);
             let payload = build_response(
                 request_id.to_string(),
                 prepared.sha256,
@@ -1591,12 +1593,8 @@ impl WsTranscriptState {
         if self.fallback_fragments.is_empty() {
             return None;
         }
-        Some(
-            self.fallback_fragments
-                .drain(..)
-                .collect::<Vec<_>>()
-                .join(" "),
-        )
+        let fragments = self.fallback_fragments.drain(..).collect::<Vec<_>>();
+        Some(merge_fallback_fragments(&fragments))
     }
 
     fn append_completed_transcript(&mut self, transcript: &str) {
@@ -1638,6 +1636,50 @@ impl WsTranscriptState {
             transcript
         }
     }
+}
+
+fn merge_fallback_fragments(fragments: &[String]) -> String {
+    let mut merged = Vec::<String>::new();
+    for fragment in fragments {
+        let words = fragment
+            .split_whitespace()
+            .filter(|word| !word.is_empty())
+            .collect::<Vec<_>>();
+        if words.is_empty() {
+            continue;
+        }
+        if merged.is_empty() {
+            merged.extend(words.into_iter().map(ToOwned::to_owned));
+            continue;
+        }
+
+        let overlap = fallback_word_overlap(&merged, &words);
+        merged.extend(words.into_iter().skip(overlap).map(ToOwned::to_owned));
+    }
+    merged.join(" ")
+}
+
+fn fallback_word_overlap(existing: &[String], incoming: &[&str]) -> usize {
+    let max_overlap = existing
+        .len()
+        .min(incoming.len())
+        .min(FALLBACK_OVERLAP_WORD_LIMIT);
+    for overlap in (FALLBACK_MIN_OVERLAP_WORDS..=max_overlap).rev() {
+        let start = existing.len() - overlap;
+        let matches = existing[start..]
+            .iter()
+            .zip(incoming.iter().take(overlap))
+            .all(|(left, right)| normalize_fallback_word(left) == normalize_fallback_word(right));
+        if matches {
+            return overlap;
+        }
+    }
+    0
+}
+
+fn normalize_fallback_word(word: &str) -> String {
+    word.trim_matches(|ch: char| !ch.is_alphanumeric())
+        .to_ascii_lowercase()
 }
 
 fn commit_absolute_words(
@@ -1833,5 +1875,36 @@ fn classify_error(error: &anyhow::Error) -> StatusCode {
         StatusCode::BAD_REQUEST
     } else {
         StatusCode::INTERNAL_SERVER_ERROR
+    }
+}
+
+#[cfg(test)]
+mod fallback_tests {
+    use super::merge_fallback_fragments;
+
+    #[test]
+    fn merges_overlapping_fallback_fragments() {
+        let fragments = vec![
+            "And so, my fellow Americans, ask not what your".to_string(),
+            "What your country can do for you, ask what you can do for your country.".to_string(),
+        ];
+
+        assert_eq!(
+            merge_fallback_fragments(&fragments),
+            "And so, my fellow Americans, ask not what your country can do for you, ask what you can do for your country."
+        );
+    }
+
+    #[test]
+    fn keeps_distinct_fallback_fragments() {
+        let fragments = vec![
+            "The first sentence is here.".to_string(),
+            "A different sentence follows.".to_string(),
+        ];
+
+        assert_eq!(
+            merge_fallback_fragments(&fragments),
+            "The first sentence is here. A different sentence follows."
+        );
     }
 }

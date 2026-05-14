@@ -2,19 +2,19 @@ use crate::asr::WindowTranscription;
 use crate::chunking::TimedWord;
 use crate::config::DEFAULT_LANGUAGE;
 use anyhow::{Context, Result};
-use crossbeam_channel::{Receiver, Sender, bounded};
+use crossbeam_channel::{bounded, Receiver, Sender};
 use ndarray::{Array2, Array3, ArrayD, Axis, Ix1};
 use ort::execution_providers::{
-    CPUExecutionProvider, CUDAExecutionProvider, ExecutionProvider, ExecutionProviderDispatch,
-    TensorRTExecutionProvider,
+    coreml, CPUExecutionProvider, CUDAExecutionProvider, CoreML, ExecutionProvider,
+    ExecutionProviderDispatch, TensorRTExecutionProvider,
 };
 use ort::logging::LogLevel;
-use ort::session::Session;
 use ort::session::builder::GraphOptimizationLevel;
+use ort::session::Session;
 use ort::value::Tensor as OrtTensor;
 use ort::value::ValueType;
-use rustfft::FftPlanner;
 use rustfft::num_complex::Complex32;
+use rustfft::FftPlanner;
 use serde::Deserialize;
 use std::cmp;
 use std::collections::{HashMap, HashSet};
@@ -25,8 +25,8 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::thread;
-use tokio::sync::oneshot;
 use tokenizers::Tokenizer;
+use tokio::sync::oneshot;
 use tracing::{info, warn};
 static ORT_INIT: OnceLock<Result<(), String>> = OnceLock::new();
 
@@ -81,7 +81,46 @@ struct DecodeConfig {
 #[derive(Clone, Debug)]
 struct CohereRuntimeConfig {
     force_cpu: bool,
+    coreml: CohereCoreMlConfig,
     trt: CohereTensorRtConfig,
+}
+
+#[derive(Clone, Debug)]
+struct CohereCoreMlConfig {
+    enabled: bool,
+    compute_units: CohereCoreMlComputeUnits,
+    cache_dir: Option<PathBuf>,
+    low_precision_accumulation_on_gpu: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum CohereCoreMlComputeUnits {
+    All,
+    CpuAndNeuralEngine,
+    CpuAndGpu,
+    CpuOnly,
+}
+
+impl CohereCoreMlComputeUnits {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::All => "all",
+            Self::CpuAndNeuralEngine => "cpu-and-neural-engine",
+            Self::CpuAndGpu => "cpu-and-gpu",
+            Self::CpuOnly => "cpu-only",
+        }
+    }
+}
+
+impl From<CohereCoreMlComputeUnits> for coreml::ComputeUnits {
+    fn from(value: CohereCoreMlComputeUnits) -> Self {
+        match value {
+            CohereCoreMlComputeUnits::All => Self::All,
+            CohereCoreMlComputeUnits::CpuAndNeuralEngine => Self::CPUAndNeuralEngine,
+            CohereCoreMlComputeUnits::CpuAndGpu => Self::CPUAndGPU,
+            CohereCoreMlComputeUnits::CpuOnly => Self::CPUOnly,
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -92,13 +131,14 @@ struct CohereTensorRtConfig {
     min_duration_s: usize,
     opt_duration_s: usize,
     max_duration_s: usize,
+    min_feature_steps: usize,
+    opt_feature_steps: usize,
+    max_feature_steps: usize,
     workspace_bytes: usize,
     builder_optimization_level: u8,
     fp16: bool,
     detailed_build_log: bool,
     feature_size: usize,
-    sample_rate: usize,
-    hop_size: usize,
     subsampling_factor: usize,
     prompt_len: usize,
     max_new_tokens: usize,
@@ -144,13 +184,15 @@ impl CohereBackend {
         onnx_sessions: usize,
         max_new_tokens: usize,
     ) -> Result<Self> {
-        let preprocessor = load_json::<PreprocessorConfig>(&model_dir.join("preprocessor_config.json"))
-            .context("failed to load Cohere preprocessor_config.json")?;
+        let preprocessor =
+            load_json::<PreprocessorConfig>(&model_dir.join("preprocessor_config.json"))
+                .context("failed to load Cohere preprocessor_config.json")?;
         let generation = load_json::<GenerationConfig>(&model_dir.join("generation_config.json"))
             .context("failed to load Cohere generation_config.json")?;
-        let export = load_json::<ExportMetadata>(&model_dir.join("export.json")).unwrap_or_default();
-        let model_config = load_json::<CohereModelConfig>(&model_dir.join("config.json"))
-            .unwrap_or_default();
+        let export =
+            load_json::<ExportMetadata>(&model_dir.join("export.json")).unwrap_or_default();
+        let model_config =
+            load_json::<CohereModelConfig>(&model_dir.join("config.json")).unwrap_or_default();
         let tokenizer = Tokenizer::from_file(model_dir.join("tokenizer.json"))
             .map_err(|error| anyhow::anyhow!(error.to_string()))
             .context("failed to load Cohere tokenizer.json")?;
@@ -244,14 +286,18 @@ impl CohereDecoderClient {
         decode: DecodeConfig,
         runtime: CohereRuntimeConfig,
     ) -> Result<Self> {
-        if !runtime.force_cpu {
+        if runtime.requires_device_ids() {
             anyhow::ensure!(
                 !device_ids.is_empty(),
-                "Cohere backend requires at least one GPU device id; set ASR_DEVICE_IDS or use ASR_COHERE_FORCE_CPU=true for explicit CPU compare mode"
+                "Cohere backend requires at least one GPU device id; set ASR_DEVICE_IDS, ASR_COHERE_COREML=true for Apple GPU/CoreML, or ASR_COHERE_FORCE_CPU=true for explicit CPU compare mode"
             );
         }
 
-        let worker_count = device_ids.len().max(1) * onnx_sessions.max(1);
+        let worker_count = if runtime.uses_single_execution_target() {
+            onnx_sessions.max(1)
+        } else {
+            device_ids.len().max(1) * onnx_sessions.max(1)
+        };
         let (job_tx, job_rx) = bounded::<CohereJob>(worker_count * 2);
         let (result_tx, result_rx) = bounded::<CohereJobResult>(worker_count * 2);
         let state = Arc::new(Mutex::new(CohereDecoderState {
@@ -259,7 +305,7 @@ impl CohereDecoderClient {
             completed: HashMap::new(),
         }));
 
-        let effective_device_ids = if runtime.force_cpu {
+        let effective_device_ids = if runtime.uses_single_execution_target() {
             vec![None]
         } else {
             device_ids.iter().copied().map(Some).collect()
@@ -401,8 +447,26 @@ impl CohereWorker {
                 trt_profile_min_s = runtime.trt.min_duration_s,
                 trt_profile_opt_s = runtime.trt.opt_duration_s,
                 trt_profile_max_s = runtime.trt.max_duration_s,
+                trt_profile_min_frames = runtime.trt.min_feature_steps,
+                trt_profile_opt_frames = runtime.trt.opt_feature_steps,
+                trt_profile_max_frames = runtime.trt.max_feature_steps,
                 "Cohere execution providers ready"
             );
+        } else if runtime.coreml.enabled {
+            info!(
+                compute_units = runtime.coreml.compute_units.as_str(),
+                cache_dir = runtime
+                    .coreml
+                    .cache_dir
+                    .as_ref()
+                    .map(|path| path.display().to_string())
+                    .unwrap_or_else(|| "disabled".to_string()),
+                low_precision_accumulation_on_gpu =
+                    runtime.coreml.low_precision_accumulation_on_gpu,
+                "Cohere CoreML execution provider ready"
+            );
+        } else {
+            info!("Cohere CPU execution provider ready");
         }
 
         let encoder = session_from_providers(
@@ -458,10 +522,8 @@ impl CohereWorker {
             feature_offset.unwrap_or(0) == 0,
             "Cohere feature tensor had a non-zero storage offset"
         );
-        let feature_tensor = Array3::from_shape_vec(
-            (1, feature_shape.0, feature_shape.1),
-            feature_data,
-        )?;
+        let feature_tensor =
+            Array3::from_shape_vec((1, feature_shape.0, feature_shape.1), feature_data)?;
         let feature_length = OrtTensor::from_array(([1], vec![raw_feature_length]))?;
         let feature_tensor = OrtTensor::from_array(feature_tensor)?;
         let encoder_input_names = self
@@ -494,11 +556,10 @@ impl CohereWorker {
             .context("Cohere encoded_length output was empty")?;
 
         let prompt_len = self.decode.prompt_ids.len();
-        let prompt_ids = OrtTensor::from_array((
-            [1i64, prompt_len as i64],
-            self.decode.prompt_ids.clone(),
-        ))?;
-        let prompt_mask = OrtTensor::from_array(([1i64, prompt_len as i64], vec![1i64; prompt_len]))?;
+        let prompt_ids =
+            OrtTensor::from_array(([1i64, prompt_len as i64], self.decode.prompt_ids.clone()))?;
+        let prompt_mask =
+            OrtTensor::from_array(([1i64, prompt_len as i64], vec![1i64; prompt_len]))?;
         let encoder_hidden_tensor = OrtTensor::from_array(encoder_hidden_states.clone())?;
         let raw_length_tensor = OrtTensor::from_array(([1], vec![raw_feature_length]))?;
         let prefill_input_names = self
@@ -654,10 +715,8 @@ fn build_prompt(language: &str, punctuation: bool) -> String {
 }
 
 fn load_json<T: for<'de> Deserialize<'de>>(path: &Path) -> Result<T> {
-    let bytes = fs::read(path)
-        .with_context(|| format!("failed to read {}", path.display()))?;
-    serde_json::from_slice(&bytes)
-        .with_context(|| format!("failed to parse {}", path.display()))
+    let bytes = fs::read(path).with_context(|| format!("failed to read {}", path.display()))?;
+    serde_json::from_slice(&bytes).with_context(|| format!("failed to parse {}", path.display()))
 }
 
 fn ort_error<E: std::fmt::Display>(error: E) -> anyhow::Error {
@@ -685,70 +744,20 @@ fn env_var_u8(name: &str) -> Option<u8> {
     env::var(name).ok()?.trim().parse::<u8>().ok()
 }
 
-fn ort_runtime_candidates() -> Vec<PathBuf> {
-    let mut candidates = Vec::new();
-
-    for key in ["ASR_ONNX_RUNTIME_LIB", "ORT_DYLIB_PATH"] {
-        if let Ok(value) = env::var(key) {
-            let path = PathBuf::from(value);
-            if !path.as_os_str().is_empty() {
-                candidates.push(path);
-            }
-        }
-    }
-
-    if let Ok(exe) = env::current_exe() {
-        if let Some(dir) = exe.parent() {
-            candidates.push(dir.join("libonnxruntime.so"));
-            candidates.push(dir.join("deps").join("libonnxruntime.so"));
-            candidates.push(dir.join("lib").join("libonnxruntime.so"));
-        }
-    }
-
-    candidates.push(PathBuf::from("/usr/local/lib/libonnxruntime.so"));
-    candidates.push(PathBuf::from("/usr/lib/libonnxruntime.so"));
-    candidates.push(PathBuf::from("/usr/lib/x86_64-linux-gnu/libonnxruntime.so"));
-
-    let mut unique = Vec::new();
-    let mut seen = HashSet::new();
-    for path in candidates {
-        if seen.insert(path.clone()) {
-            unique.push(path);
-        }
-    }
-    unique
-}
-
 fn ensure_ort_initialized() -> Result<()> {
     let result = ORT_INIT.get_or_init(|| {
-        let mut errors = Vec::new();
-        for candidate in ort_runtime_candidates() {
-            if !candidate.exists() {
-                continue;
-            }
-
-            match ort::init_from(&candidate) {
-                Ok(builder) => {
-                    let created = builder.commit();
-                    info!(
-                        path = %candidate.display(),
-                        created,
-                        "loaded ONNX Runtime dynamically"
-                    );
-                    return Ok(());
-                }
-                Err(error) => errors.push(format!("{}: {error}", candidate.display())),
-            }
+        if let Some(path) =
+            env_var_nonempty("ASR_ONNX_RUNTIME_LIB").or_else(|| env_var_nonempty("ORT_DYLIB_PATH"))
+        {
+            let created = ort::init_from(path.as_str())
+                .map_err(|error| error.to_string())?
+                .commit();
+            info!(created, path, "initialized dynamic ONNX Runtime");
+            return Ok(());
         }
-
-        if errors.is_empty() {
-            Err("failed to locate libonnxruntime.so; set ASR_ONNX_RUNTIME_LIB or ORT_DYLIB_PATH".to_string())
-        } else {
-            Err(format!(
-                "failed to initialize libonnxruntime.so: {}",
-                errors.join(" | ")
-            ))
-        }
+        let created = ort::init().commit();
+        info!(created, "initialized ONNX Runtime");
+        Ok(())
     });
     result
         .as_ref()
@@ -757,9 +766,15 @@ fn ensure_ort_initialized() -> Result<()> {
 }
 
 fn session_from_providers(path: &Path, providers: &[ExecutionProviderDispatch]) -> Result<Session> {
+    let optimization_level = if cohere_coreml_requested() {
+        GraphOptimizationLevel::Disable
+    } else {
+        GraphOptimizationLevel::Level3
+    };
+
     Session::builder()
         .map_err(ort_error)?
-        .with_optimization_level(GraphOptimizationLevel::Level3)
+        .with_optimization_level(optimization_level)
         .map_err(ort_error)?
         .with_log_level(LogLevel::Info)
         .map_err(ort_error)?
@@ -769,6 +784,13 @@ fn session_from_providers(path: &Path, providers: &[ExecutionProviderDispatch]) 
         .map_err(ort_error)?
         .commit_from_file(path)
         .map_err(ort_error)
+}
+
+fn cohere_coreml_requested() -> bool {
+    let provider =
+        env_var_nonempty("ASR_COHERE_EXECUTION_PROVIDER").map(|value| value.to_ascii_lowercase());
+    env_var_truthy("ASR_COHERE_COREML")
+        || matches!(provider.as_deref(), Some("coreml" | "metal" | "apple"))
 }
 
 fn concrete_shape(value_type: &ValueType) -> Option<Vec<usize>> {
@@ -842,6 +864,14 @@ fn provider_chain(
     runtime: &CohereRuntimeConfig,
     shapes: Option<&[(String, Vec<usize>)]>,
 ) -> Vec<ExecutionProviderDispatch> {
+    if runtime.force_cpu {
+        return vec![CPUExecutionProvider::default().build()];
+    }
+
+    if runtime.coreml.enabled {
+        return vec![coreml_provider(&runtime.coreml)];
+    }
+
     match device_id {
         Some(device_id) => {
             let mut providers = Vec::new();
@@ -885,7 +915,7 @@ fn provider_chain(
                         tensorrt = tensorrt.with_profile_max_shapes(max_shapes);
                     }
                 }
-                providers.push(tensorrt.build().fail_silently());
+                providers.push(tensorrt.build().error_on_failure());
             }
             providers.push(
                 CUDAExecutionProvider::default()
@@ -899,6 +929,20 @@ fn provider_chain(
     }
 }
 
+fn coreml_provider(config: &CohereCoreMlConfig) -> ExecutionProviderDispatch {
+    let mut coreml = CoreML::default()
+        .with_compute_units(config.compute_units.into())
+        .with_static_input_shapes(true)
+        .with_specialization_strategy(coreml::SpecializationStrategy::FastPrediction);
+    if let Some(cache_dir) = &config.cache_dir {
+        coreml = coreml.with_model_cache_dir(cache_dir.display().to_string());
+    }
+    if config.low_precision_accumulation_on_gpu {
+        coreml = coreml.with_low_precision_accumulation_on_gpu(true);
+    }
+    coreml.build().error_on_failure()
+}
+
 impl CohereRuntimeConfig {
     fn from_env(
         model_dir: &Path,
@@ -909,6 +953,7 @@ impl CohereRuntimeConfig {
     ) -> Self {
         Self {
             force_cpu: env_var_truthy("ASR_COHERE_FORCE_CPU"),
+            coreml: CohereCoreMlConfig::from_env(),
             trt: CohereTensorRtConfig::from_env(
                 model_dir,
                 preprocessor,
@@ -919,8 +964,32 @@ impl CohereRuntimeConfig {
         }
     }
 
+    fn requires_device_ids(&self) -> bool {
+        !self.force_cpu && !self.coreml.enabled
+    }
+
+    fn uses_single_execution_target(&self) -> bool {
+        self.force_cpu || self.coreml.enabled
+    }
+
     fn validate(&self, device_id: Option<usize>) -> Result<()> {
         if self.force_cpu {
+            return Ok(());
+        }
+
+        if self.coreml.enabled {
+            anyhow::ensure!(
+                CoreML::default().is_available().unwrap_or(false),
+                "Cohere CoreML requested, but the CoreML execution provider is unavailable in the linked ONNX Runtime build"
+            );
+            if let Some(cache_dir) = &self.coreml.cache_dir {
+                fs::create_dir_all(cache_dir).with_context(|| {
+                    format!(
+                        "failed to create Cohere CoreML cache dir {}",
+                        cache_dir.display()
+                    )
+                })?;
+            }
             return Ok(());
         }
 
@@ -933,7 +1002,7 @@ impl CohereRuntimeConfig {
                 TensorRTExecutionProvider::default()
                     .is_available()
                     .unwrap_or(false),
-                "Cohere TensorRT requested via ASR_COHERE_TRT_COMPONENTS={}, but TensorRT execution provider is unavailable; check ORT_DYLIB_PATH/ASR_ONNX_RUNTIME_LIB and TensorRT shared libraries",
+                "Cohere TensorRT requested via ASR_COHERE_TRT_COMPONENTS={}, but TensorRT execution provider is unavailable; check the linked ONNX Runtime build and TensorRT shared libraries",
                 self.trt.components_raw
             );
             fs::create_dir_all(&self.trt.cache_dir).with_context(|| {
@@ -945,6 +1014,39 @@ impl CohereRuntimeConfig {
         }
 
         Ok(())
+    }
+}
+
+impl CohereCoreMlConfig {
+    fn from_env() -> Self {
+        let enabled = cohere_coreml_requested();
+        let compute_units = env_var_nonempty("ASR_COHERE_COREML_COMPUTE_UNITS")
+            .as_deref()
+            .and_then(parse_coreml_compute_units)
+            .unwrap_or(CohereCoreMlComputeUnits::CpuAndGpu);
+        let cache_dir = env_var_nonempty("ASR_COHERE_COREML_CACHE_DIR").map(PathBuf::from);
+        let low_precision_accumulation_on_gpu =
+            env_var_truthy("ASR_COHERE_COREML_LOW_PRECISION_ACCUMULATION_ON_GPU");
+
+        Self {
+            enabled,
+            compute_units,
+            cache_dir,
+            low_precision_accumulation_on_gpu,
+        }
+    }
+}
+
+fn parse_coreml_compute_units(value: &str) -> Option<CohereCoreMlComputeUnits> {
+    let normalized = value.trim().to_ascii_lowercase().replace(['_', ' '], "-");
+    match normalized.as_str() {
+        "all" => Some(CohereCoreMlComputeUnits::All),
+        "cpu-and-neural-engine" | "cpu-neural-engine" | "cpu-and-ane" | "ane" => {
+            Some(CohereCoreMlComputeUnits::CpuAndNeuralEngine)
+        }
+        "cpu-and-gpu" | "cpu-gpu" | "gpu" | "metal" => Some(CohereCoreMlComputeUnits::CpuAndGpu),
+        "cpu-only" | "cpu" => Some(CohereCoreMlComputeUnits::CpuOnly),
+        _ => None,
     }
 }
 
@@ -978,6 +1080,30 @@ impl CohereTensorRtConfig {
         let opt_duration_s = env_var_usize("ASR_COHERE_TRT_PROFILE_OPT_S")
             .unwrap_or_else(|| cmp::min(max_duration_s, cmp::max(min_duration_s, 4)))
             .clamp(min_duration_s, max_duration_s);
+        let default_min_feature_steps = frame_steps_for_duration(
+            preprocessor.sampling_rate as usize,
+            preprocessor.n_window_stride,
+            min_duration_s,
+        );
+        let default_opt_feature_steps = frame_steps_for_duration(
+            preprocessor.sampling_rate as usize,
+            preprocessor.n_window_stride,
+            opt_duration_s,
+        );
+        let default_max_feature_steps = frame_steps_for_duration(
+            preprocessor.sampling_rate as usize,
+            preprocessor.n_window_stride,
+            max_duration_s,
+        );
+        let min_feature_steps = env_var_usize("ASR_COHERE_TRT_PROFILE_MIN_FRAMES")
+            .unwrap_or(default_min_feature_steps)
+            .max(1);
+        let max_feature_steps = env_var_usize("ASR_COHERE_TRT_PROFILE_MAX_FRAMES")
+            .unwrap_or(default_max_feature_steps)
+            .max(min_feature_steps);
+        let opt_feature_steps = env_var_usize("ASR_COHERE_TRT_PROFILE_OPT_FRAMES")
+            .unwrap_or(default_opt_feature_steps)
+            .clamp(min_feature_steps, max_feature_steps);
 
         Self {
             components_raw,
@@ -988,6 +1114,9 @@ impl CohereTensorRtConfig {
             min_duration_s,
             opt_duration_s,
             max_duration_s,
+            min_feature_steps,
+            opt_feature_steps,
+            max_feature_steps,
             workspace_bytes: env_var_usize("ASR_COHERE_TRT_WORKSPACE_BYTES")
                 .unwrap_or(4 * 1024 * 1024 * 1024)
                 .max(1 << 20),
@@ -999,8 +1128,6 @@ impl CohereTensorRtConfig {
                 .unwrap_or(true),
             detailed_build_log: env_var_truthy("ASR_COHERE_TRT_DETAILED_BUILD_LOG"),
             feature_size: preprocessor.feature_size,
-            sample_rate: preprocessor.sampling_rate as usize,
-            hop_size: preprocessor.n_window_stride,
             subsampling_factor: model_config
                 .encoder
                 .as_ref()
@@ -1021,11 +1148,11 @@ impl CohereTensorRtConfig {
             || self.enabled_components.contains(component.config_token())
     }
 
-    fn duration_for(&self, target: CohereProfileTarget) -> usize {
+    fn feature_steps_for(&self, target: CohereProfileTarget) -> usize {
         match target {
-            CohereProfileTarget::Min => self.min_duration_s,
-            CohereProfileTarget::Opt => self.opt_duration_s,
-            CohereProfileTarget::Max => self.max_duration_s,
+            CohereProfileTarget::Min => self.min_feature_steps,
+            CohereProfileTarget::Opt => self.opt_feature_steps,
+            CohereProfileTarget::Max => self.max_feature_steps,
         }
     }
 
@@ -1044,8 +1171,7 @@ impl CohereTensorRtConfig {
         target: CohereProfileTarget,
         shapes: &[(String, Vec<usize>)],
     ) -> Option<String> {
-        let feature_steps =
-            frame_steps_for_duration(self.sample_rate, self.hop_size, self.duration_for(target));
+        let feature_steps = self.feature_steps_for(target);
         let encoded_steps = encoded_steps_for(feature_steps, self.subsampling_factor);
         let self_steps = self.self_steps_for(target);
         let mut entries = Vec::new();
@@ -1086,12 +1212,16 @@ impl CohereTensorRtConfig {
                     dims[0] = 1;
                     entries.push(format_profile_entry(name, &dims));
                 }
-                ModelComponent::DecoderCachedStep if name == "decoder_input_ids" && dims.len() >= 2 => {
+                ModelComponent::DecoderCachedStep
+                    if name == "decoder_input_ids" && dims.len() >= 2 =>
+                {
                     dims[0] = 1;
                     dims[1] = 1;
                     entries.push(format_profile_entry(name, &dims));
                 }
-                ModelComponent::DecoderCachedStep if name == "encoded_length" && !dims.is_empty() => {
+                ModelComponent::DecoderCachedStep
+                    if name == "encoded_length" && !dims.is_empty() =>
+                {
                     dims[0] = 1;
                     entries.push(format_profile_entry(name, &dims));
                 }
@@ -1217,7 +1347,8 @@ impl CohereFrontend {
             }
 
             for mel_idx in 0..self.feature_size {
-                let filter = &self.mel_filters[(mel_idx * self.fft_bins)..((mel_idx + 1) * self.fft_bins)];
+                let filter =
+                    &self.mel_filters[(mel_idx * self.fft_bins)..((mel_idx + 1) * self.fft_bins)];
                 let mut energy = 0.0f32;
                 for (weight, bin_power) in filter.iter().zip(power.iter()) {
                     energy += *weight * *bin_power;
@@ -1227,7 +1358,12 @@ impl CohereFrontend {
             }
         }
 
-        normalize_per_feature(&mut features, self.feature_size, seq_len, self.padding_value);
+        normalize_per_feature(
+            &mut features,
+            self.feature_size,
+            seq_len,
+            self.padding_value,
+        );
         Array2::from_shape_vec((self.feature_size, seq_len), features)
             .context("failed to shape Cohere mel features")
     }

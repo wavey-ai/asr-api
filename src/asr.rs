@@ -76,7 +76,13 @@ impl AsrBackend {
                 }
                 #[cfg(not(feature = "nemo-backend"))]
                 {
-                    let _ = (model_dir, vocab_path, device_ids, torch_sessions, onnx_sessions);
+                    let _ = (
+                        model_dir,
+                        vocab_path,
+                        device_ids,
+                        torch_sessions,
+                        onnx_sessions,
+                    );
                     anyhow::bail!("this asr-api build does not include the NeMo backend");
                 }
             }

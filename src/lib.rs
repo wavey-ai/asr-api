@@ -76,7 +76,7 @@ pub async fn run(config: AppConfig) -> Result<()> {
     #[cfg(not(feature = "gpu-backend"))]
     if config.role.uses_asr_backend() {
         anyhow::bail!(
-            "this asr-api build does not include the GPU backend; use the worker image for role {:?}",
+            "this asr-api build does not include the GPU backend; rebuild with the gpu-backend feature for role {:?}",
             config.role
         );
     }
@@ -84,7 +84,7 @@ pub async fn run(config: AppConfig) -> Result<()> {
     #[cfg(not(feature = "audio-decoder"))]
     if config.role.uses_audio_decoder() {
         anyhow::bail!(
-            "this asr-api build does not include the audio decoder; use the decoder image for role {:?}",
+            "this asr-api build does not include the audio decoder; rebuild with the audio-decoder feature for role {:?}",
             config.role
         );
     }

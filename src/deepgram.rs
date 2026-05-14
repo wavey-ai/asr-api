@@ -573,7 +573,7 @@ fn get_request_value(req: &Request<()>, header_name: &str, query_name: &str) -> 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::AppRole;
+    use crate::config::{AppRole, AsrModelProvider};
 
     fn test_config() -> AppConfig {
         AppConfig {
@@ -586,9 +586,11 @@ mod tests {
             tls_key_path: None,
             model_dir: Some("/tmp/model".into()),
             vocab_path: None,
+            model_provider: AsrModelProvider::Nemo,
             device_ids: vec![0],
             torch_sessions: 1,
             onnx_sessions: 1,
+            cohere_max_new_tokens: 384,
             chunk_seconds: 30.0,
             overlap_seconds: 2.0,
             final_min_seconds: 0.5,

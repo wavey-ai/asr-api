@@ -54,7 +54,21 @@
         "tokenizer.json",
         "tokenizer.model",
         "tokenizer_config.json"
-      ]
+      ],
+      "engine_caches": {
+        "rtx4000-ada-ort1.23.2-trt10-fp16-all-35s": {
+          "source_prefix": "models/cohere-transcribe-03-2026/trt-cache/rtx4000-ada-ort1.23.2-trt10-fp16-all-35s",
+          "runtime": "onnxruntime-gpu 1.23.2 TensorRT EP",
+          "gpu": "NVIDIA RTX 4000 Ada Generation",
+          "precision": "fp16",
+          "components": "all",
+          "profile_frames": {
+            "min": 64,
+            "opt": 3000,
+            "max": 3500
+          }
+        }
+      }
     }
   }
 }

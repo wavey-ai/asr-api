@@ -26,7 +26,7 @@ impl ModelProvider {
 #[derive(Debug, Clone, Parser)]
 #[command(
     name = "local-orchestrator",
-    about = "Launch a local ingress/decoder/worker asr-api stack without container overhead"
+    about = "Launch a local ingress/decoder/worker asr-api stack"
 )]
 struct Config {
     #[arg(long)]
@@ -82,6 +82,9 @@ struct Config {
     #[arg(long, default_value_t = 10443)]
     worker_port: u16,
 
+    #[arg(long, env = "ASR_WORKER_COUNT", default_value_t = 1)]
+    worker_count: usize,
+
     #[arg(long, env = "CHUNK_SECONDS", default_value_t = 30.0)]
     chunk_seconds: f32,
 
@@ -121,6 +124,13 @@ struct Config {
 
     #[arg(
         long,
+        env = "UPLOAD_RESPONSE_WORKER_ID_PREFIX",
+        default_value = "asr-api-worker-local"
+    )]
+    upload_response_worker_id_prefix: String,
+
+    #[arg(
+        long,
         env = "UPLOAD_RESPONSE_DISCOVERY_INTERVAL_MS",
         default_value_t = 2_000
     )]
@@ -141,17 +151,19 @@ struct Config {
 }
 
 struct Service {
-    name: &'static str,
+    name: String,
     child: Child,
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
     let config = Config::parse();
+    validate_config(&config)?;
     let asr_api_bin = ensure_asr_api_binary(config.asr_api_bin.clone()).await?;
     let ingress_url = format!("https://127.0.0.1:{}", config.ingress_port);
+    let worker_urls = worker_urls(&config)?;
 
-    let mut services = Vec::with_capacity(3);
+    let mut services = Vec::with_capacity(2 + config.worker_count);
     services.push(
         spawn_service(
             "ingress",
@@ -181,39 +193,45 @@ async fn main() -> Result<()> {
         )
         .await?,
     );
-    services.push(
-        spawn_service(
-            "worker",
-            &asr_api_bin,
-            &config,
-            vec![
-                ("ASR_API_ROLE", "worker".to_string()),
-                ("PORT", config.worker_port.to_string()),
-                ("ASR_MODEL_DIR", config.model_dir.display().to_string()),
-                (
-                    "ASR_MODEL_PROVIDER",
-                    config.model_provider.as_env().to_string(),
-                ),
-                ("ASR_TORCH_SESSIONS", config.torch_sessions.to_string()),
-                ("ASR_ONNX_SESSIONS", config.onnx_sessions.to_string()),
-                (
-                    "ASR_COHERE_MAX_NEW_TOKENS",
-                    config.cohere_max_new_tokens.to_string(),
-                ),
-                ("ASR_DEVICE_IDS", config.device_ids.clone()),
-                (
-                    "UPLOAD_RESPONSE_WORKER_ID",
-                    "asr-api-worker-local".to_string(),
-                ),
-                ("UPLOAD_RESPONSE_INGRESS_URLS", ingress_url),
-            ],
-        )
-        .await?,
-    );
+
+    for worker_index in 0..config.worker_count {
+        let port = worker_port(&config, worker_index)?;
+        services.push(
+            spawn_service(
+                worker_service_name(&config, worker_index),
+                &asr_api_bin,
+                &config,
+                vec![
+                    ("ASR_API_ROLE", "worker".to_string()),
+                    ("PORT", port.to_string()),
+                    ("ASR_MODEL_DIR", config.model_dir.display().to_string()),
+                    (
+                        "ASR_MODEL_PROVIDER",
+                        config.model_provider.as_env().to_string(),
+                    ),
+                    ("ASR_TORCH_SESSIONS", config.torch_sessions.to_string()),
+                    ("ASR_ONNX_SESSIONS", config.onnx_sessions.to_string()),
+                    (
+                        "ASR_COHERE_MAX_NEW_TOKENS",
+                        config.cohere_max_new_tokens.to_string(),
+                    ),
+                    ("ASR_DEVICE_IDS", config.device_ids.clone()),
+                    (
+                        "UPLOAD_RESPONSE_WORKER_ID",
+                        worker_id(&config, worker_index),
+                    ),
+                    ("UPLOAD_RESPONSE_INGRESS_URLS", ingress_url.clone()),
+                ],
+            )
+            .await?,
+        );
+    }
 
     eprintln!(
-        "local stack ready: ingress=https://127.0.0.1:{} decoder=https://127.0.0.1:{} worker=https://127.0.0.1:{}",
-        config.ingress_port, config.decoder_port, config.worker_port
+        "local stack ready: ingress=https://127.0.0.1:{} decoder=https://127.0.0.1:{} workers={}",
+        config.ingress_port,
+        config.decoder_port,
+        worker_urls.join(",")
     );
 
     let mut tick = interval(Duration::from_millis(250));
@@ -293,11 +311,12 @@ async fn ensure_asr_api_binary(explicit: Option<PathBuf>) -> Result<PathBuf> {
 }
 
 async fn spawn_service(
-    name: &'static str,
+    name: impl Into<String>,
     asr_api_bin: &Path,
     config: &Config,
     role_env: Vec<(&'static str, String)>,
 ) -> Result<Service> {
+    let name = name.into();
     let mut command = Command::new(asr_api_bin);
     command.stdin(Stdio::null());
     command.stdout(Stdio::piped());
@@ -348,7 +367,9 @@ async fn spawn_service(
     );
     command.env(
         "UPLOAD_RESPONSE_WORKER_HEARTBEAT_INTERVAL_MS",
-        config.upload_response_worker_heartbeat_interval_ms.to_string(),
+        config
+            .upload_response_worker_heartbeat_interval_ms
+            .to_string(),
     );
     command.env(
         "UPLOAD_RESPONSE_WORKER_TTL_MS",
@@ -374,10 +395,10 @@ async fn spawn_service(
         .with_context(|| format!("failed to spawn {name} service"))?;
 
     if let Some(stdout) = child.stdout.take() {
-        tokio::spawn(stream_output(name, "stdout", stdout));
+        tokio::spawn(stream_output(name.clone(), "stdout", stdout));
     }
     if let Some(stderr) = child.stderr.take() {
-        tokio::spawn(stream_output(name, "stderr", stderr));
+        tokio::spawn(stream_output(name.clone(), "stderr", stderr));
     }
 
     Ok(Service { name, child })
@@ -393,7 +414,10 @@ async fn shutdown_services(services: &mut [Service]) {
                 let _ = service.child.start_kill();
             }
             Err(error) => {
-                eprintln!("[orchestrator] failed to poll {} during shutdown: {error}", service.name);
+                eprintln!(
+                    "[orchestrator] failed to poll {} during shutdown: {error}",
+                    service.name
+                );
             }
         }
     }
@@ -404,13 +428,16 @@ async fn shutdown_services(services: &mut [Service]) {
                 eprintln!("[orchestrator] {} stopped with {}", service.name, status);
             }
             Err(error) => {
-                eprintln!("[orchestrator] failed waiting for {}: {error}", service.name);
+                eprintln!(
+                    "[orchestrator] failed waiting for {}: {error}",
+                    service.name
+                );
             }
         }
     }
 }
 
-async fn stream_output<R>(service: &'static str, stream_name: &'static str, reader: R)
+async fn stream_output<R>(service: String, stream_name: &'static str, reader: R)
 where
     R: tokio::io::AsyncRead + Unpin,
 {
@@ -433,6 +460,47 @@ fn exe_name(stem: &str) -> String {
     } else {
         stem.to_string()
     }
+}
+
+fn validate_config(config: &Config) -> Result<()> {
+    anyhow::ensure!(
+        config.worker_count > 0,
+        "--worker-count must be greater than 0"
+    );
+    worker_port(config, config.worker_count - 1)?;
+    Ok(())
+}
+
+fn worker_port(config: &Config, index: usize) -> Result<u16> {
+    let offset = u16::try_from(index).context("worker index does not fit in u16")?;
+    config.worker_port.checked_add(offset).with_context(|| {
+        format!(
+            "--worker-count {} from --worker-port {} exceeds the u16 port range",
+            config.worker_count, config.worker_port
+        )
+    })
+}
+
+fn worker_id(config: &Config, index: usize) -> String {
+    if config.worker_count == 1 {
+        config.upload_response_worker_id_prefix.clone()
+    } else {
+        format!("{}-{}", config.upload_response_worker_id_prefix, index + 1)
+    }
+}
+
+fn worker_service_name(config: &Config, index: usize) -> String {
+    if config.worker_count == 1 {
+        "worker".to_string()
+    } else {
+        format!("worker-{}", index + 1)
+    }
+}
+
+fn worker_urls(config: &Config) -> Result<Vec<String>> {
+    (0..config.worker_count)
+        .map(|index| worker_port(config, index).map(|port| format!("https://127.0.0.1:{port}")))
+        .collect()
 }
 
 fn bool_env(value: bool) -> &'static str {
