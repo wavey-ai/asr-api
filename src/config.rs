@@ -6,9 +6,8 @@ use upload_response::UploadResponseConfig;
 use web_service::{load_default_tls_base64, load_tls_base64_from_paths};
 
 pub const ASR_SAMPLE_RATE: u32 = 16_000;
-pub const DEFAULT_NEMO_MODEL_NAME: &str = "wavey-parakeet-tdt-onnx";
 pub const DEFAULT_COHERE_MODEL_NAME: &str = "wavey-cohere-transcribe-onnx";
-pub const DEFAULT_MODEL_NAME: &str = DEFAULT_NEMO_MODEL_NAME;
+pub const DEFAULT_MODEL_NAME: &str = DEFAULT_COHERE_MODEL_NAME;
 pub const DEFAULT_LANGUAGE: &str = "en";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
@@ -28,22 +27,19 @@ pub enum AppRole {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 pub enum AsrModelProvider {
     Auto,
-    Nemo,
     Cohere,
 }
 
 impl AsrModelProvider {
     pub fn default_model_name(self) -> &'static str {
         match self {
-            Self::Cohere => DEFAULT_COHERE_MODEL_NAME,
-            Self::Auto | Self::Nemo => DEFAULT_NEMO_MODEL_NAME,
+            Self::Auto | Self::Cohere => DEFAULT_COHERE_MODEL_NAME,
         }
     }
 
     pub fn default_model_arch(self) -> &'static str {
         match self {
-            Self::Cohere => "cohere-transcribe-seq2seq",
-            Self::Auto | Self::Nemo => "parakeet-tdt-onnx",
+            Self::Auto | Self::Cohere => "cohere-transcribe-seq2seq",
         }
     }
 }
@@ -96,9 +92,6 @@ pub struct AppConfig {
     #[arg(long = "model-dir", env = "ASR_MODEL_DIR")]
     pub model_dir: Option<PathBuf>,
 
-    #[arg(long = "vocab-path", env = "ASR_VOCAB_PATH")]
-    pub vocab_path: Option<PathBuf>,
-
     #[arg(
         long = "model-provider",
         env = "ASR_MODEL_PROVIDER",
@@ -114,9 +107,6 @@ pub struct AppConfig {
         default_value = "0"
     )]
     pub device_ids: Vec<usize>,
-
-    #[arg(long, env = "ASR_TORCH_SESSIONS", default_value_t = 1)]
-    pub torch_sessions: usize,
 
     #[arg(long, env = "ASR_ONNX_SESSIONS", default_value_t = 1)]
     pub onnx_sessions: usize,
@@ -252,10 +242,6 @@ impl AppConfig {
             let model_dir = self.model_dir()?;
             let provider = self.resolved_model_provider()?;
             anyhow::ensure!(
-                self.torch_sessions > 0,
-                "ASR_TORCH_SESSIONS must be greater than 0"
-            );
-            anyhow::ensure!(
                 self.onnx_sessions > 0,
                 "ASR_ONNX_SESSIONS must be greater than 0"
             );
@@ -265,97 +251,49 @@ impl AppConfig {
             );
 
             match provider {
-                AsrModelProvider::Nemo => {
-                    ensure_any_exists(
-                        model_dir,
-                        &["encoder.fp16.onnx", "encoder.onnx", "encoder.int8.onnx"],
-                        "encoder",
-                    )?;
-                    ensure_any_exists(
-                        model_dir,
-                        &["decoder.fp16.onnx", "decoder.onnx", "decoder.int8.onnx"],
-                        "decoder",
-                    )?;
-                    ensure_any_exists(
-                        model_dir,
-                        &[
-                            "joint.enc.fp16.onnx",
-                            "joint.enc.onnx",
-                            "joint.enc.int8.onnx",
-                        ],
-                        "joint.enc",
-                    )?;
-                    ensure_any_exists(
-                        model_dir,
-                        &[
-                            "joint.pred.fp16.onnx",
-                            "joint.pred.onnx",
-                            "joint.pred.int8.onnx",
-                        ],
-                        "joint.pred",
-                    )?;
-                    ensure_any_exists(
-                        model_dir,
-                        &[
-                            "joint.joint_net.fp16.onnx",
-                            "joint.joint_net.onnx",
-                            "joint.joint_net.int8.onnx",
-                        ],
-                        "joint.joint_net",
-                    )?;
-
-                    let tokens_path = model_dir.join("tokens.txt");
-                    if !tokens_path.is_file() {
-                        let vocab_path = self.resolve_vocab_path()?;
-                        anyhow::ensure!(
-                            vocab_path.is_file(),
-                            "ASR_VOCAB_PATH must point to a readable file when tokens.txt is absent"
-                        );
-                    }
-                }
                 AsrModelProvider::Cohere => {
-                    let force_cpu = env_var_truthy("ASR_COHERE_FORCE_CPU");
-                    let coreml = env_var_truthy("ASR_COHERE_COREML")
-                        || env::var("ASR_COHERE_EXECUTION_PROVIDER")
-                            .ok()
-                            .map(|value| {
-                                matches!(
-                                    value.trim().to_ascii_lowercase().as_str(),
-                                    "coreml" | "metal" | "apple"
-                                )
-                            })
-                            .unwrap_or(false);
-                    anyhow::ensure!(
-                        force_cpu || coreml || !self.device_ids.is_empty(),
-                        "Cohere backend requires at least one GPU device id; set ASR_DEVICE_IDS, ASR_COHERE_COREML=true for Apple GPU/CoreML, or ASR_COHERE_FORCE_CPU=true for explicit CPU compare mode"
-                    );
-                    ensure_all_exists(
-                        model_dir,
-                        &[
-                            "encoder.onnx",
-                            "encoder.onnx.data",
-                            "decoder_prefill.onnx",
-                            "decoder_prefill.onnx.data",
-                            "decoder_cached_step.onnx",
-                            "decoder_cached_step.onnx.data",
-                            "tokenizer.json",
-                            "tokenizer.model",
-                            "config.json",
-                            "generation_config.json",
-                            "preprocessor_config.json",
-                        ],
-                    )?;
+                    if cohere_runtime_is_mlx() {
+                        ensure_all_exists(
+                            model_dir,
+                            &["config.json", "model.safetensors", "vocab.json"],
+                        )?;
+                    } else {
+                        let force_cpu = env_var_truthy("ASR_COHERE_FORCE_CPU");
+                        let coreml = env_var_truthy("ASR_COHERE_COREML")
+                            || env::var("ASR_COHERE_EXECUTION_PROVIDER")
+                                .ok()
+                                .map(|value| {
+                                    matches!(
+                                        value.trim().to_ascii_lowercase().as_str(),
+                                        "coreml" | "metal" | "apple"
+                                    )
+                                })
+                                .unwrap_or(false);
+                        anyhow::ensure!(
+                            force_cpu || coreml || !self.device_ids.is_empty(),
+                            "Cohere ONNX backend requires at least one GPU device id; set ASR_DEVICE_IDS, ASR_COHERE_COREML=true for Apple GPU/CoreML, or ASR_COHERE_FORCE_CPU=true for explicit CPU compare mode"
+                        );
+                        ensure_all_exists(
+                            model_dir,
+                            &[
+                                "encoder.onnx",
+                                "encoder.onnx.data",
+                                "decoder_prefill.onnx",
+                                "decoder_prefill.onnx.data",
+                                "decoder_cached_step.onnx",
+                                "decoder_cached_step.onnx.data",
+                                "tokenizer.json",
+                                "tokenizer.model",
+                                "config.json",
+                                "generation_config.json",
+                                "preprocessor_config.json",
+                            ],
+                        )?;
+                    }
                 }
                 AsrModelProvider::Auto => {
                     unreachable!("model provider should resolve before validation")
                 }
-            }
-
-            if !matches!(provider, AsrModelProvider::Cohere) {
-                anyhow::ensure!(
-                    !self.device_ids.is_empty(),
-                    "ASR_DEVICE_IDS must include at least one device id"
-                );
             }
         }
 
@@ -374,28 +312,9 @@ impl AppConfig {
         Ok(())
     }
 
-    pub fn resolve_vocab_path(&self) -> Result<PathBuf> {
-        let model_dir = self.model_dir()?;
-        let tokens_path = model_dir.join("tokens.txt");
-        if tokens_path.is_file() {
-            return Ok(tokens_path);
-        }
-
-        if let Some(path) = &self.vocab_path {
-            return Ok(path.clone());
-        }
-
-        let default_vocab = model_dir.join("vocab.txt");
-        anyhow::ensure!(
-            default_vocab.is_file(),
-            "model directory must contain tokens.txt or vocab.txt, or set ASR_VOCAB_PATH"
-        );
-        Ok(default_vocab)
-    }
-
     pub fn configured_model_provider(&self) -> AsrModelProvider {
         match self.model_provider {
-            AsrModelProvider::Auto => AsrModelProvider::Nemo,
+            AsrModelProvider::Auto => AsrModelProvider::Cohere,
             provider => provider,
         }
     }
@@ -415,20 +334,7 @@ impl AppConfig {
 
     pub fn resolved_model_provider(&self) -> Result<AsrModelProvider> {
         match self.model_provider {
-            AsrModelProvider::Auto => {
-                if !self.role.uses_asr_backend() {
-                    return Ok(AsrModelProvider::Nemo);
-                }
-
-                let model_dir = self.model_dir()?;
-                if model_dir.join("decoder_prefill.onnx").is_file()
-                    && model_dir.join("decoder_cached_step.onnx").is_file()
-                {
-                    Ok(AsrModelProvider::Cohere)
-                } else {
-                    Ok(AsrModelProvider::Nemo)
-                }
-            }
+            AsrModelProvider::Auto => Ok(AsrModelProvider::Cohere),
             provider => Ok(provider),
         }
     }
@@ -482,18 +388,6 @@ impl AppConfig {
     }
 }
 
-fn ensure_any_exists(model_dir: &Path, candidates: &[&str], label: &str) -> Result<()> {
-    if candidates.iter().any(|name| model_dir.join(name).is_file()) {
-        return Ok(());
-    }
-
-    anyhow::bail!(
-        "missing {label} model component in {} (checked: {})",
-        model_dir.display(),
-        candidates.join(", ")
-    )
-}
-
 fn ensure_all_exists(model_dir: &Path, required: &[&str]) -> Result<()> {
     let missing = required
         .iter()
@@ -513,6 +407,13 @@ fn ensure_all_exists(model_dir: &Path, required: &[&str]) -> Result<()> {
 
 fn seconds_to_samples(seconds: f32) -> usize {
     (seconds.max(0.0) * ASR_SAMPLE_RATE as f32).round() as usize
+}
+
+fn cohere_runtime_is_mlx() -> bool {
+    env::var("ASR_COHERE_BACKEND")
+        .ok()
+        .map(|value| value.trim().eq_ignore_ascii_case("mlx"))
+        .unwrap_or(false)
 }
 
 fn env_var_truthy(name: &str) -> bool {

@@ -25,6 +25,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::thread;
+use std::time::Instant;
 use tokenizers::Tokenizer;
 use tokio::sync::oneshot;
 use tracing::{info, warn};
@@ -515,6 +516,8 @@ impl CohereWorker {
     }
 
     fn decode(&mut self, features: Array2<f32>) -> Result<String> {
+        let timings_enabled = env_var_truthy("ASR_COHERE_TIMINGS");
+        let decode_started = Instant::now();
         let feature_shape = features.dim();
         let raw_feature_length = feature_shape.1 as i64;
         let (feature_data, feature_offset) = features.into_raw_vec_and_offset();
@@ -536,14 +539,17 @@ impl CohereWorker {
             encoder_input_names[0].as_str() => feature_tensor,
             encoder_input_names[1].as_str() => feature_length,
         };
+        let encoder_started = Instant::now();
         let encoder_outputs = self
             .encoder
             .run(encoder_inputs)
             .context("Cohere encoder session failed")?;
+        let encoder_run_s = encoder_started.elapsed().as_secs_f64();
         anyhow::ensure!(
             encoder_outputs.len() >= 2,
             "Cohere encoder did not return encoder_hidden_states and encoded_length"
         );
+        let encoder_extract_started = Instant::now();
         let encoder_hidden_states = extract_array_f32(&encoder_outputs[0])
             .context("failed to extract Cohere encoder_hidden_states")?;
         let encoded_length_arr = encoder_outputs[1]
@@ -554,6 +560,7 @@ impl CohereWorker {
         let encoded_length = *encoded_length_arr
             .first()
             .context("Cohere encoded_length output was empty")?;
+        let encoder_extract_s = encoder_extract_started.elapsed().as_secs_f64();
 
         let prompt_len = self.decode.prompt_ids.len();
         let prompt_ids =
@@ -574,16 +581,19 @@ impl CohereWorker {
             prefill_input_names[2].as_str() => prompt_ids,
             prefill_input_names[3].as_str() => prompt_mask,
         };
+        let prefill_started = Instant::now();
         let prefill_outputs = self
             .decoder_prefill
             .run(prefill_inputs)
             .context("Cohere decoder_prefill session failed")?;
+        let prefill_run_s = prefill_started.elapsed().as_secs_f64();
         anyhow::ensure!(
             prefill_outputs.len() == 1 + (self.decoder_num_layers * 4),
             "unexpected Cohere decoder_prefill output count {}",
             prefill_outputs.len()
         );
 
+        let prefill_extract_started = Instant::now();
         let mut generated_ids = Vec::new();
         let mut current_token = argmax_last_token(&extract_array_f32(&prefill_outputs[0])?)?;
         let mut self_keys = Vec::with_capacity(self.decoder_num_layers);
@@ -597,13 +607,19 @@ impl CohereWorker {
             cross_keys.push(extract_array_f32(&prefill_outputs[base + 2])?);
             cross_values.push(extract_array_f32(&prefill_outputs[base + 3])?);
         }
+        let prefill_extract_s = prefill_extract_started.elapsed().as_secs_f64();
 
+        let mut cached_input_s = 0.0;
+        let mut cached_run_s = 0.0;
+        let mut cached_extract_s = 0.0;
+        let mut cached_steps = 0usize;
         for _ in 0..self.decode.max_new_tokens {
             if current_token == self.decode.eos_token_id {
                 break;
             }
             generated_ids.push(current_token as u32);
 
+            let cached_input_started = Instant::now();
             let decoder_input_ids = OrtTensor::from_array(([1i64, 1i64], vec![current_token]))?;
             let encoded_length_tensor = OrtTensor::from_array(([1], vec![encoded_length]))?;
             let cached_input_names = self
@@ -635,29 +651,59 @@ impl CohereWorker {
                     OrtTensor::from_array(cross_values[layer_idx].clone())?.into(),
                 ));
             }
+            cached_input_s += cached_input_started.elapsed().as_secs_f64();
 
+            let cached_started = Instant::now();
             let cached_outputs = self
                 .decoder_cached_step
                 .run(inputs)
                 .context("Cohere decoder_cached_step session failed")?;
+            cached_run_s += cached_started.elapsed().as_secs_f64();
             anyhow::ensure!(
                 cached_outputs.len() == 1 + (self.decoder_num_layers * 2),
                 "unexpected Cohere decoder_cached_step output count {}",
                 cached_outputs.len()
             );
+
+            let cached_extract_started = Instant::now();
             current_token = argmax_last_token(&extract_array_f32(&cached_outputs[0])?)?;
             for layer_idx in 0..self.decoder_num_layers {
                 let base = 1 + (layer_idx * 2);
                 self_keys[layer_idx] = extract_array_f32(&cached_outputs[base])?;
                 self_values[layer_idx] = extract_array_f32(&cached_outputs[base + 1])?;
             }
+            cached_extract_s += cached_extract_started.elapsed().as_secs_f64();
+            cached_steps += 1;
         }
 
-        self.tokenizer
+        let token_decode_started = Instant::now();
+        let text = self
+            .tokenizer
             .decode(&generated_ids, true)
             .map(|text| text.trim().to_string())
             .map_err(|error| anyhow::anyhow!(error.to_string()))
-            .context("failed to decode Cohere token ids")
+            .context("failed to decode Cohere token ids")?;
+        let token_decode_s = token_decode_started.elapsed().as_secs_f64();
+
+        if timings_enabled {
+            eprintln!(
+                "cohere_timing total_ms={:.2} feature_steps={} encoded_length={} tokens={} encoder_run_ms={:.2} encoder_extract_ms={:.2} prefill_run_ms={:.2} prefill_extract_ms={:.2} cached_input_ms={:.2} cached_run_ms={:.2} cached_extract_ms={:.2} token_decode_ms={:.2}",
+                decode_started.elapsed().as_secs_f64() * 1000.0,
+                raw_feature_length,
+                encoded_length,
+                cached_steps,
+                encoder_run_s * 1000.0,
+                encoder_extract_s * 1000.0,
+                prefill_run_s * 1000.0,
+                prefill_extract_s * 1000.0,
+                cached_input_s * 1000.0,
+                cached_run_s * 1000.0,
+                cached_extract_s * 1000.0,
+                token_decode_s * 1000.0,
+            );
+        }
+
+        Ok(text)
     }
 }
 
@@ -740,15 +786,35 @@ fn env_var_usize(name: &str) -> Option<usize> {
     env::var(name).ok()?.trim().parse::<usize>().ok()
 }
 
+fn cohere_intra_threads() -> Option<usize> {
+    match env_var_usize("ASR_COHERE_INTRA_THREADS") {
+        Some(0) => None,
+        Some(threads) => Some(threads),
+        None => default_cohere_intra_threads(),
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn default_cohere_intra_threads() -> Option<usize> {
+    None
+}
+
+#[cfg(not(target_os = "macos"))]
+fn default_cohere_intra_threads() -> Option<usize> {
+    Some(1)
+}
+
+fn cohere_inter_threads() -> Option<usize> {
+    env_var_usize("ASR_COHERE_INTER_THREADS").filter(|threads| *threads > 0)
+}
+
 fn env_var_u8(name: &str) -> Option<u8> {
     env::var(name).ok()?.trim().parse::<u8>().ok()
 }
 
 fn ensure_ort_initialized() -> Result<()> {
     let result = ORT_INIT.get_or_init(|| {
-        if let Some(path) =
-            env_var_nonempty("ASR_ONNX_RUNTIME_LIB").or_else(|| env_var_nonempty("ORT_DYLIB_PATH"))
-        {
+        if let Some(path) = configured_onnxruntime_lib_path() {
             let created = ort::init_from(path.as_str())
                 .map_err(|error| error.to_string())?
                 .commit();
@@ -765,25 +831,67 @@ fn ensure_ort_initialized() -> Result<()> {
     Ok(())
 }
 
+fn configured_onnxruntime_lib_path() -> Option<String> {
+    env_var_nonempty("ASR_ONNX_RUNTIME_LIB")
+        .or_else(|| env_var_nonempty("ORT_DYLIB_PATH"))
+        .or_else(default_macos_coreml_onnxruntime_lib_path)
+}
+
+#[cfg(target_os = "macos")]
+fn default_macos_coreml_onnxruntime_lib_path() -> Option<String> {
+    if !cohere_coreml_requested() {
+        return None;
+    }
+
+    [
+        "/opt/homebrew/lib/libonnxruntime.dylib",
+        "/usr/local/lib/libonnxruntime.dylib",
+    ]
+    .into_iter()
+    .find(|path| Path::new(path).is_file())
+    .map(str::to_string)
+}
+
+#[cfg(not(target_os = "macos"))]
+fn default_macos_coreml_onnxruntime_lib_path() -> Option<String> {
+    None
+}
+
 fn session_from_providers(path: &Path, providers: &[ExecutionProviderDispatch]) -> Result<Session> {
     let optimization_level = if cohere_coreml_requested() {
         GraphOptimizationLevel::Disable
     } else {
         GraphOptimizationLevel::Level3
     };
+    let intra_threads = cohere_intra_threads();
+    let inter_threads = cohere_inter_threads();
 
-    Session::builder()
+    let mut builder = Session::builder()
         .map_err(ort_error)?
         .with_optimization_level(optimization_level)
         .map_err(ort_error)?
         .with_log_level(LogLevel::Info)
         .map_err(ort_error)?
         .with_execution_providers(providers)
-        .map_err(ort_error)?
-        .with_intra_threads(1)
-        .map_err(ort_error)?
-        .commit_from_file(path)
-        .map_err(ort_error)
+        .map_err(ort_error)?;
+
+    if let Some(intra_threads) = intra_threads {
+        builder = builder
+            .with_intra_threads(intra_threads)
+            .map_err(ort_error)?;
+    }
+
+    if env_var_truthy("ASR_COHERE_PARALLEL_EXECUTION") {
+        builder = builder.with_parallel_execution(true).map_err(ort_error)?;
+    }
+
+    if let Some(inter_threads) = inter_threads {
+        builder = builder
+            .with_inter_threads(inter_threads)
+            .map_err(ort_error)?;
+    }
+
+    builder.commit_from_file(path).map_err(ort_error)
 }
 
 fn cohere_coreml_requested() -> bool {

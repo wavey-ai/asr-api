@@ -82,7 +82,7 @@ BUCKET_REGION="${ASR_MODEL_BUCKET_REGION:-us-iad}"
 BUCKET_ENDPOINT="${ASR_MODEL_BUCKET_ENDPOINT:-https://us-iad-1.linodeobjects.com}"
 
 case "$MODEL_ID" in
-  cohere-transcribe-03-2026|parakeet-tdt-0.6b-v3)
+  cohere-transcribe-03-2026)
     ;;
   *)
     echo "unsupported model: $MODEL_ID" >&2

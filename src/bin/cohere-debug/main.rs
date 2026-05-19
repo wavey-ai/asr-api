@@ -1,11 +1,13 @@
 use anyhow::{Context, Result};
-use asr_api::cohere::CohereBackend;
+use asr_api::asr::AsrBackend;
+use asr_api::config::AsrModelProvider;
 use bytes::Bytes;
 use clap::Parser;
 use soundkit::audio_pipeline::audio_to_mono_f32;
 use soundkit_decoder::{DecodeError, DecodeOptions, DecodePipeline};
 use std::fs;
 use std::path::PathBuf;
+use std::time::Instant;
 
 const ASR_SAMPLE_RATE: u32 = 16_000;
 
@@ -21,6 +23,10 @@ struct Args {
     onnx_sessions: usize,
     #[arg(long, default_value_t = 384)]
     max_new_tokens: usize,
+    #[arg(long, default_value_t = 0)]
+    warmup: usize,
+    #[arg(long, default_value_t = 1)]
+    repeat: usize,
 }
 
 #[tokio::main]
@@ -57,17 +63,61 @@ async fn main() -> Result<()> {
         })
         .collect::<Result<Vec<_>>>()?;
 
-    let backend = CohereBackend::new(
+    let audio_seconds = samples.len() as f64 / f64::from(ASR_SAMPLE_RATE);
+
+    let init_started = Instant::now();
+    let backend = AsrBackend::new(
         &args.model_dir,
+        AsrModelProvider::Cohere,
         &device_ids,
         args.onnx_sessions,
         args.max_new_tokens,
     )?;
-    let result = backend.transcribe_window(samples, 0).await?;
+    let init_elapsed = init_started.elapsed();
+
+    for idx in 0..args.warmup {
+        let started = Instant::now();
+        let result = backend
+            .transcribe_window(samples.clone(), idx as u32)
+            .await?;
+        eprintln!(
+            "warmup={} decode_ms={:.2} rtfx={:.2} text_len={}",
+            idx + 1,
+            started.elapsed().as_secs_f64() * 1000.0,
+            audio_seconds / started.elapsed().as_secs_f64(),
+            result.text.len()
+        );
+    }
+
+    let mut decode_times = Vec::with_capacity(args.repeat);
+    let mut last_result = None;
+    for idx in 0..args.repeat {
+        let started = Instant::now();
+        let result = backend
+            .transcribe_window(samples.clone(), (args.warmup + idx) as u32)
+            .await?;
+        let elapsed = started.elapsed();
+        eprintln!(
+            "repeat={} decode_ms={:.2} rtfx={:.2} text_len={}",
+            idx + 1,
+            elapsed.as_secs_f64() * 1000.0,
+            audio_seconds / elapsed.as_secs_f64(),
+            result.text.len()
+        );
+        decode_times.push(elapsed.as_secs_f64());
+        last_result = Some(result);
+    }
+
+    let result = last_result.context("repeat must be at least 1")?;
+    let mean_decode_s = decode_times.iter().sum::<f64>() / decode_times.len() as f64;
 
     println!("text={}", result.text);
     println!("text_len={}", result.text.len());
     println!("words={}", result.words.len());
+    println!("audio_seconds={audio_seconds:.3}");
+    println!("init_ms={:.2}", init_elapsed.as_secs_f64() * 1000.0);
+    println!("mean_decode_ms={:.2}", mean_decode_s * 1000.0);
+    println!("mean_rtfx={:.2}", audio_seconds / mean_decode_s);
     std::mem::forget(backend);
     std::process::exit(0);
 }

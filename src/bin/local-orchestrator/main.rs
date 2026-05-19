@@ -9,7 +9,6 @@ use tokio::time::{interval, sleep, Duration};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 enum ModelProvider {
     Auto,
-    Nemo,
     Cohere,
 }
 
@@ -17,7 +16,6 @@ impl ModelProvider {
     fn as_env(self) -> &'static str {
         match self {
             Self::Auto => "auto",
-            Self::Nemo => "nemo",
             Self::Cohere => "cohere",
         }
     }
@@ -35,9 +33,6 @@ struct Config {
     #[arg(long, env = "ASR_MODEL_DIR")]
     model_dir: PathBuf,
 
-    #[arg(long, env = "ASR_VOCAB_PATH")]
-    vocab_path: Option<PathBuf>,
-
     #[arg(
         long,
         env = "ASR_MODEL_PROVIDER",
@@ -49,14 +44,14 @@ struct Config {
     #[arg(long, env = "ASR_DEVICE_IDS", default_value = "0")]
     device_ids: String,
 
-    #[arg(long, env = "ASR_TORCH_SESSIONS", default_value_t = 1)]
-    torch_sessions: usize,
-
     #[arg(long, env = "ASR_ONNX_SESSIONS", default_value_t = 1)]
     onnx_sessions: usize,
 
     #[arg(long, env = "ASR_COHERE_MAX_NEW_TOKENS", default_value_t = 384)]
     cohere_max_new_tokens: usize,
+
+    #[arg(long, env = "ASR_COHERE_BACKEND", default_value = "onnx")]
+    cohere_backend: String,
 
     #[arg(long, env = "RUST_LOG", default_value = "info")]
     rust_log: String,
@@ -209,12 +204,12 @@ async fn main() -> Result<()> {
                         "ASR_MODEL_PROVIDER",
                         config.model_provider.as_env().to_string(),
                     ),
-                    ("ASR_TORCH_SESSIONS", config.torch_sessions.to_string()),
                     ("ASR_ONNX_SESSIONS", config.onnx_sessions.to_string()),
                     (
                         "ASR_COHERE_MAX_NEW_TOKENS",
                         config.cohere_max_new_tokens.to_string(),
                     ),
+                    ("ASR_COHERE_BACKEND", config.cohere_backend.clone()),
                     ("ASR_DEVICE_IDS", config.device_ids.clone()),
                     (
                         "UPLOAD_RESPONSE_WORKER_ID",
@@ -382,10 +377,6 @@ async fn spawn_service(
     if let Some(path) = &config.tls_key_path {
         command.env("TLS_KEY_PATH", path);
     }
-    if let Some(path) = &config.vocab_path {
-        command.env("ASR_VOCAB_PATH", path);
-    }
-
     for (key, value) in role_env {
         command.env(key, value);
     }

@@ -6,21 +6,20 @@ edition = "2021"
 [[bin]]
 name = "cohere-debug"
 path = "src/bin/cohere-debug/main.rs"
-required-features = ["cohere-backend", "audio-decoder"]
+required-features = ["gpu-backend", "audio-decoder"]
 
 [features]
-default = ["nemo-backend", "cohere-backend", "audio-decoder"]
+default = ["cohere-backend", "audio-decoder"]
 gpu-backend = []
-nemo-backend = [
-    "gpu-backend",
-    "dep:asr-onnx",
-    "dep:asr-torch",
-]
 cohere-backend = [
     "gpu-backend",
     "dep:ort",
     "dep:rustfft",
     "dep:tokenizers",
+]
+cohere-mlx = [
+    "gpu-backend",
+    "dep:cohere-transcribe-rs",
 ]
 audio-decoder = ["dep:av-api", "dep:soundkit", "dep:soundkit-decoder"]
 
@@ -28,11 +27,10 @@ audio-decoder = ["dep:av-api", "dep:soundkit", "dep:soundkit-decoder"]
 anyhow = "1.0"
 async-trait = "0.1"
 av-api = { git = "https://github.com/wavey-ai/av-api.git", optional = true }
-asr-onnx = { git = "https://github.com/wavey-ai/asr-onnx.git", optional = true }
-asr-torch = { git = "https://github.com/wavey-ai/asr-torch.git", optional = true }
 bytes = "1"
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 clap = { version = "4.5", features = ["derive", "env"] }
+cohere-transcribe-rs = { git = "https://github.com/second-state/cohere_transcribe_rs.git", rev = "d7fd40d520f4c52f2f165b40b9e1f6bce78c34a9", default-features = false, features = ["mlx"], optional = true }
 crossbeam-channel = "0.5"
 dotenvy = "0.15"
 futures-util = "0.3"

@@ -17,7 +17,6 @@ Environment:
   ASR_MODEL_BUCKET_ENDPOINT Defaults to https://us-iad-1.linodeobjects.com
 
 Supported models:
-  parakeet-tdt-0.6b-v3
   cohere-transcribe-03-2026
 
 Behavior:
@@ -86,26 +85,6 @@ STAGED_DIR=""
 BACKUP_DIR=""
 
 case "$MODEL_ID" in
-  parakeet-tdt-0.6b-v3)
-    SOURCE_PREFIX="models/parakeet-tdt-0.6b-v3"
-    FILES=(
-      SHA256SUMS
-      decoder.onnx
-      decoder.onnx.data
-      encoder.onnx
-      encoder.onnx.data
-      export.json
-      featurizer_cuda0.pt
-      joint.enc.onnx
-      joint.enc.onnx.data
-      joint.joint_net.onnx
-      joint.joint_net.onnx.data
-      joint.pred.onnx
-      joint.pred.onnx.data
-      tokens.txt
-      vocab.txt
-    )
-    ;;
   cohere-transcribe-03-2026)
     SOURCE_PREFIX="models/cohere-transcribe-03-2026"
     FILES=(

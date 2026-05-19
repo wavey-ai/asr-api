@@ -3,6 +3,8 @@ pub mod asr;
 pub mod chunking;
 #[cfg(feature = "cohere-backend")]
 pub mod cohere;
+#[cfg(feature = "cohere-mlx")]
+pub mod cohere_mlx;
 pub mod config;
 #[cfg(feature = "audio-decoder")]
 pub mod decoder;
@@ -101,17 +103,6 @@ pub async fn run(config: AppConfig) -> Result<()> {
     } else {
         None
     };
-    let vocab_path = if config.role.uses_asr_backend()
-        && config
-            .resolved_model_provider()
-            .map(|provider| matches!(provider, crate::config::AsrModelProvider::Nemo))
-            .unwrap_or(false)
-    {
-        Some(config.resolve_vocab_path()?)
-    } else {
-        None
-    };
-
     let upload_service = if config.role.exposes_upload_cache() {
         Some(Arc::new(UploadResponseService::new(
             config.upload_response_config(),
@@ -132,10 +123,8 @@ pub async fn run(config: AppConfig) -> Result<()> {
             model_dir
                 .as_ref()
                 .expect("model dir already validated for backend role"),
-            vocab_path.as_deref(),
             model_provider.expect("model provider already validated for backend role"),
             &config.device_ids,
-            config.torch_sessions,
             config.onnx_sessions,
             config.cohere_max_new_tokens,
         )?))
@@ -219,12 +208,7 @@ pub async fn run(config: AppConfig) -> Result<()> {
             .map(|path| path.display().to_string())
             .unwrap_or_else(|| "-".to_string()),
         model_provider = %config.default_model_provider().default_model_name(),
-        vocab_path = %vocab_path
-            .as_ref()
-            .map(|path| path.display().to_string())
-            .unwrap_or_else(|| "-".to_string()),
         device_ids = ?config.device_ids,
-        torch_sessions = config.torch_sessions,
         onnx_sessions = config.onnx_sessions,
         chunk_seconds = config.chunk_seconds,
         overlap_seconds = config.overlap_seconds,

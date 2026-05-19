@@ -266,17 +266,12 @@ pub struct UtteranceWord {
 pub fn default_model_info(model: &str) -> (String, BTreeMap<String, ModelInfo>) {
     let model_id = model.to_string();
     let mut model_info = BTreeMap::new();
-    let arch = if model.to_ascii_lowercase().contains("cohere") {
-        "cohere-transcribe-seq2seq"
-    } else {
-        "parakeet-tdt-onnx"
-    };
     model_info.insert(
         model_id.clone(),
         ModelInfo {
             name: model.to_string(),
             version: "local".into(),
-            arch: arch.into(),
+            arch: "cohere-transcribe-seq2seq".into(),
         },
     );
     (model_id, model_info)
@@ -585,10 +580,8 @@ mod tests {
             tls_cert_path: None,
             tls_key_path: None,
             model_dir: Some("/tmp/model".into()),
-            vocab_path: None,
-            model_provider: AsrModelProvider::Nemo,
+            model_provider: AsrModelProvider::Cohere,
             device_ids: vec![0],
-            torch_sessions: 1,
             onnx_sessions: 1,
             cohere_max_new_tokens: 384,
             chunk_seconds: 30.0,
