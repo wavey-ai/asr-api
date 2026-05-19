@@ -1,10 +1,10 @@
 # asr-api
 
-`asr-api` is a Deepgram-compatible prerecorded transcription service for
-running Cohere Transcribe behind Wavey's `web-service` and `upload-response`
-stack. It accepts uploaded audio bytes, normalizes them to mono `16 kHz` PCM,
-transcribes with either Cohere ONNX Runtime or Cohere MLX, and returns the
-usual Deepgram-style JSON shape.
+`asr-api` is a Deepgram-compatible Cohere Transcribe service behind Wavey's
+`web-service` and `upload-response` stack. It accepts buffered uploads,
+streaming request bodies, and WebSocket audio on `/v1/listen`, normalizes audio
+to mono `16 kHz` PCM, transcribes with either Cohere ONNX Runtime or Cohere MLX,
+and returns Deepgram-style JSON.
 
 This is useful when the ASR problem is not "call a model once from a CLI", but
 "keep a service hot, split CPU decode from GPU inference, measure real
@@ -13,8 +13,8 @@ integrations can already speak."
 
 ## Useful For
 
-- Prerecorded ASR ingestion where clients upload media directly to
-  `POST /v1/listen` and expect Deepgram-compatible response JSON.
+- Deepgram-compatible ASR where clients send buffered uploads, streaming
+  request bodies, or WebSocket audio to `/v1/listen`.
 - GPU service experiments where ingress, decode, model execution, and response
   collection need to be measured as separate stages.
 - Production-style benchmarking of Cohere Transcribe on Ada-class NVIDIA GPUs
@@ -25,16 +25,14 @@ integrations can already speak."
   use ASR output as an intermediate artifact for structured notes, product
   analysis, search indexes, or QA.
 
-It is not a generic model zoo. The current ASR backend is Cohere Transcribe.
-URL jobs are not implemented; upload the audio body directly.
-
 ## Architecture
 
 The runtime is intentionally split into three roles:
 
-1. `ingress`: HTTP / WebSocket front door. It accepts `POST /v1/listen`, writes
-   raw request bytes and request metadata into `upload-response`, and waits for
-   a worker response.
+1. `ingress`: `web-service` front door. It accepts `/v1/listen` through the
+   enabled `web-service` transports, including request-body streams and
+   WebSocket audio, writes request bytes and metadata into `upload-response`,
+   and waits for a worker response.
 2. `decoder`: CPU processing stage. It discovers ingress origins, claims raw
    request streams, decodes/resamples/downmixes them to mono `16 kHz` `f32`,
    and writes canonical PCM to the `decoded` stage lane.
@@ -45,14 +43,6 @@ The runtime is intentionally split into three roles:
 The split keeps model libraries out of ingress, keeps audio codec work off the
 GPU worker, and makes worker throughput visible at the cache/stage boundary.
 The handoff is `upload-response`; there is no Redis sidecar or external queue.
-
-## Dependency Shape
-
-The repo builds from HTTPS git dependencies; it does not require sibling
-checkouts. The Wavey crates used here provide TLS/server plumbing, shared
-in-memory staged response transport, worker orchestration, media decode, and
-supporting protocol utilities. The ASR-specific runtime, Cohere ONNX wrapper,
-MLX wrapper, request handling, response shaping, and benchmarks live here.
 
 ## Build
 
@@ -284,9 +274,9 @@ For MLX on a local 16 GB Apple Silicon host, use one worker. Additional MLX
 workers are separate processes with separate model copies, and the measured
 behavior was worse due to Metal/unified-memory contention.
 
-## Request Shape
+## Request Shapes
 
-Upload raw audio bytes:
+Buffered upload:
 
 ```bash
 curl --http2 -k \
@@ -295,13 +285,20 @@ curl --http2 -k \
   'https://localhost:8443/v1/listen?utterances=true&paragraphs=true&timestamps=true'
 ```
 
-The success shape mirrors Deepgram prerecorded responses:
+Buffered responses use the Deepgram JSON shape:
 
 - `metadata`
 - `results.channels[0].alternatives[0].transcript`
 - `results.channels[0].alternatives[0].words`
 - optional `results.utterances`
 - optional `results.channels[0].alternatives[0].paragraphs`
+
+Streaming is also supported on `/v1/listen`:
+
+- request-body streaming returns newline-delimited JSON;
+- WebSocket clients send binary audio frames and may send JSON control messages
+  with `type` set to `KeepAlive`, `Finalize`, or `CloseStream`;
+- `interim_results=true` enables interim `Results` events.
 
 Correlation IDs use Wavey's snowflake generator and are propagated internally
 in `x-wavey-request-id`. If the client supplies a numeric `x-request-id`,
