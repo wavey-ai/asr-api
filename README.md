@@ -1,15 +1,10 @@
 # asr-api
 
-`asr-api` is a Deepgram-compatible Cohere Transcribe service behind Wavey's
-`web-service` and `upload-response` stack. It accepts buffered uploads,
-streaming request bodies, and WebSocket audio on `/v1/listen`, normalizes audio
-to mono `16 kHz` PCM, transcribes with either Cohere ONNX Runtime or Cohere MLX,
-and returns Deepgram-style JSON.
-
-This is useful when the ASR problem is not "call a model once from a CLI", but
-"keep a service hot, split CPU decode from GPU inference, measure real
-end-to-end RTFx, and preserve a client-facing API that existing Deepgram
-integrations can already speak."
+`asr-api` provides a Deepgram-compatible `/v1/listen` API for Cohere
+Transcribe. It supports buffered uploads, streaming request bodies, and
+WebSocket audio, normalizes input audio to mono `16 kHz` PCM, runs inference
+with either Cohere ONNX Runtime or Cohere MLX, and returns
+Deepgram-compatible JSON.
 
 ## Useful For
 
@@ -27,12 +22,12 @@ integrations can already speak."
 
 ## Architecture
 
-The runtime is intentionally split into three roles:
+The runtime has three roles:
 
-1. `ingress`: `web-service` front door. It accepts `/v1/listen` through the
-   enabled `web-service` transports, including request-body streams and
-   WebSocket audio, writes request bytes and metadata into `upload-response`,
-   and waits for a worker response.
+1. `ingress`: accepts `/v1/listen` through the enabled `web-service`
+   transports, including request-body streams and WebSocket audio. It writes
+   request bytes and metadata into `upload-response` and waits for a worker
+   response.
 2. `decoder`: CPU processing stage. It discovers ingress origins, claims raw
    request streams, decodes/resamples/downmixes them to mono `16 kHz` `f32`,
    and writes canonical PCM to the `decoded` stage lane.
