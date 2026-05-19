@@ -458,17 +458,12 @@ total Cohere ONNX sessions fit on the `20 GiB` RTX 4000 Ada host.
 ## Example Workload
 
 The [Bitneedle scratch tutorial sweep](examples/bitneedle-scratch-tutorial-sweep/README.md)
-documents a real media-research workload: public DJ scratching tutorial videos
-were resolved through `av-ingest`, segmented to WAV chunks, submitted to
-`asr-api`, and reduced into non-verbatim technique maps, timestamped summaries,
-and UI implications.
+is the worked example in this repo. It resolves public DJ scratching tutorials
+through `av-ingest`, segments the audio to mono `16 kHz` WAV chunks, submits
+those chunks to `/v1/listen`, and stores non-verbatim research artifacts:
+technique tags, timestamped summaries, aggregate term counts, and UI notes.
 
-That run is useful because it exercises the production shape rather than a
-single-file benchmark: network media retrieval, chunk-level parallelism,
-conversational tutorial audio with music/equipment noise, endpoint latency,
-worker scheduling, and downstream structured extraction.
-
-Observed measured portion on `2026-05-17`:
+Measured portion from the `2026-05-17` run:
 
 - `78` uploaded chunks across `11` videos
 - `4,378.0s` aggregate media duration
