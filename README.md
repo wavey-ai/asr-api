@@ -393,9 +393,6 @@ one-thread cap helped substantially, but this export remained encoder-bound.
 | `asr-api` MLX | warmup 1 | `9409.93ms` | `1.17x` | includes cold Metal compilation |
 | `asr-api` MLX | repeat 1 | `2191.12ms` | `5.02x` | still warming |
 | `asr-api` MLX | repeats 2-5 | `1006-1021ms` | `10.77-10.93x` | steady warm path |
-| upstream `transcribe` CLI | one direct run | `22.64s` | `0.49x` | includes model load each process |
-| upstream `transcribe-server` | request 1 | `6.739s` | `1.63x` | model already loaded, cold Metal request |
-| upstream `transcribe-server` | requests 3-5 | `0.989-1.003s` | `10.96-11.12x` | steady warm path |
 
 `/tmp/asr-cohere-bench-30.wav`, 30.0s audio, Cohere MLX, release build,
 `--max-new-tokens 128`:
@@ -405,8 +402,6 @@ one-thread cap helped substantially, but this export remained encoder-bound.
 | `asr-api` MLX | init | `8260.89ms` | - | model load and backend setup |
 | `asr-api` MLX | warmup 1 | `6535.53ms` | `4.59x` | cold request |
 | `asr-api` MLX | repeats 1-3 | `1986-1989ms` | `15.08-15.10x` | steady warm path |
-| upstream `transcribe-server` | request 1 | `7.253s` | `4.14x` | model already loaded, cold request |
-| upstream `transcribe-server` | request 3 | `1.981s` | `15.14x` | steady warm path |
 
 Local service-stack MLX results:
 
@@ -415,10 +410,9 @@ Local service-stack MLX results:
 | Mac MLX `asr-api` | `1` worker | `2` x 30s WAV, c=`1` | `14.57` | `3.99` | `4.98s` | Good local-dev path; use one worker. |
 | Mac MLX `asr-api` | `2` workers | `2` x 30s WAV, c=`2` | `1.66` | `0.94` | `40.02s` | Two model copies fought for the same MLX/Metal resources. |
 
-The MLX integration is in the same performance band as the upstream
-`second-state/cohere_transcribe_rs` server on warm requests. The slow numbers
-are cold-start and first-request Metal compilation effects. For this repo, MLX
-is the Apple Silicon development backend; Ada TensorRT is the throughput path.
+The slow MLX numbers are cold-start and first-request Metal compilation
+effects. For this repo, MLX is the Apple Silicon development backend; Ada
+TensorRT is the throughput path.
 
 ## Cohere Ada Benchmarks
 
