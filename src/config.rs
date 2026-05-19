@@ -6,7 +6,9 @@ use upload_response::UploadResponseConfig;
 use web_service::{load_default_tls_base64, load_tls_base64_from_paths};
 
 pub const ASR_SAMPLE_RATE: u32 = 16_000;
-pub const DEFAULT_COHERE_MODEL_NAME: &str = "wavey-cohere-transcribe-onnx";
+pub const DEFAULT_COHERE_ONNX_MODEL_NAME: &str = "wavey-cohere-transcribe-onnx";
+pub const DEFAULT_COHERE_MLX_MODEL_NAME: &str = "wavey-cohere-transcribe-mlx";
+pub const DEFAULT_COHERE_MODEL_NAME: &str = DEFAULT_COHERE_ONNX_MODEL_NAME;
 pub const DEFAULT_MODEL_NAME: &str = DEFAULT_COHERE_MODEL_NAME;
 pub const DEFAULT_LANGUAGE: &str = "en";
 
@@ -33,7 +35,7 @@ pub enum AsrModelProvider {
 impl AsrModelProvider {
     pub fn default_model_name(self) -> &'static str {
         match self {
-            Self::Auto | Self::Cohere => DEFAULT_COHERE_MODEL_NAME,
+            Self::Auto | Self::Cohere => default_cohere_model_name(),
         }
     }
 
@@ -42,6 +44,10 @@ impl AsrModelProvider {
             Self::Auto | Self::Cohere => "cohere-transcribe-seq2seq",
         }
     }
+}
+
+pub fn default_cohere_model_name() -> &'static str {
+    cohere_model_name_for_backend(env::var("ASR_COHERE_BACKEND").ok().as_deref())
 }
 
 impl AppRole {
@@ -416,8 +422,40 @@ fn cohere_runtime_is_mlx() -> bool {
         .unwrap_or(false)
 }
 
+fn cohere_model_name_for_backend(backend: Option<&str>) -> &'static str {
+    if backend
+        .map(|value| value.trim().eq_ignore_ascii_case("mlx"))
+        .unwrap_or(false)
+    {
+        DEFAULT_COHERE_MLX_MODEL_NAME
+    } else {
+        DEFAULT_COHERE_ONNX_MODEL_NAME
+    }
+}
+
 fn env_var_truthy(name: &str) -> bool {
     env::var(name)
         .map(|value| matches!(value.as_str(), "1" | "true" | "TRUE" | "True"))
         .unwrap_or(false)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cohere_default_model_name_matches_runtime_label() {
+        assert_eq!(
+            cohere_model_name_for_backend(None),
+            DEFAULT_COHERE_ONNX_MODEL_NAME
+        );
+        assert_eq!(
+            cohere_model_name_for_backend(Some("onnx")),
+            DEFAULT_COHERE_ONNX_MODEL_NAME
+        );
+        assert_eq!(
+            cohere_model_name_for_backend(Some("mlx")),
+            DEFAULT_COHERE_MLX_MODEL_NAME
+        );
+    }
 }
