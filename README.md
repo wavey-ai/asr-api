@@ -46,18 +46,13 @@ The split keeps model libraries out of ingress, keeps audio codec work off the
 GPU worker, and makes worker throughput visible at the cache/stage boundary.
 The handoff is `upload-response`; there is no Redis sidecar or external queue.
 
-## Workspace Dependencies
+## Dependency Shape
 
-This crate expects the Wavey workspace layout:
-
-- `../web-services/web-service`
-- `../web-services/upload-response`
-- `../gpu-workers/gpu-worker`
-
-Those sibling crates provide TLS/server plumbing, shared in-memory staged
-response transport, and worker orchestration. The ASR-specific runtime,
-Cohere ONNX wrapper, MLX wrapper, request handling, response shaping, and
-benchmarks live here.
+The repo builds from HTTPS git dependencies; it does not require sibling
+checkouts. The Wavey crates used here provide TLS/server plumbing, shared
+in-memory staged response transport, worker orchestration, media decode, and
+supporting protocol utilities. The ASR-specific runtime, Cohere ONNX wrapper,
+MLX wrapper, request handling, response shaping, and benchmarks live here.
 
 ## Build
 
@@ -350,7 +345,8 @@ ASR_COHERE_TRT_FP16=true
 
 `Stage RTFx` is the measured load window after warmup. `Whole RTFx` includes
 prewarm, warmup, client/report overhead, and server orchestration effects.
-`Response mean` is the `asr-load` part-response mean for `asr-api` rows.
+`Response mean` is the benchmark client's part-response mean for `asr-api`
+rows.
 
 These numbers are useful because they answer different operational questions:
 
@@ -438,7 +434,7 @@ These are point-in-time Cohere Transcribe measurements from the Linode NVIDIA
 RTX 4000 Ada Generation host (`20475 MiB` VRAM) on `2026-05-14`. The
 `asr-api` rows used release binaries, the split `ingress` / `decoder` /
 `worker` upload-response path, the Cohere ONNX bundle synced from the bucket,
-and Harvard `*.s16le` PCM files through `../asr-load --h2 --warmup`.
+and Harvard `*.s16le` PCM files submitted over HTTP/2 after warmup.
 
 | Runtime | Topology | Measured load | OK / fail | Stage RTFx | Whole RTFx | Mean TTFB | Response mean | GPU VRAM | Notes |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |

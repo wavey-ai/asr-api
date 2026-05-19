@@ -3,5 +3,3 @@
 __pycache__/
 *.pyc
 models/*
-!models/README.md
-!models/bucket-manifest.json

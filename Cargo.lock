@@ -892,7 +892,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -1202,6 +1202,7 @@ checksum = "0cc23270f6e1808e30a928bdc84dea0b9b4136a8bc82338574f23baf47bbd280"
 [[package]]
 name = "gpu-worker"
 version = "0.1.0"
+source = "git+https://github.com/wavey-ai/gpu-workers.git#49b133a0d7f4fa1e0b7c864f279bc1887439bca1"
 dependencies = [
  "gpu-worker-upload-response",
 ]
@@ -1209,6 +1210,7 @@ dependencies = [
 [[package]]
 name = "gpu-worker-upload-response"
 version = "0.1.0"
+source = "git+https://github.com/wavey-ai/gpu-workers.git#49b133a0d7f4fa1e0b7c864f279bc1887439bca1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1399,7 +1401,7 @@ dependencies = [
 [[package]]
 name = "http-pack"
 version = "0.1.0"
-source = "git+https://github.com/wavey-ai/http-pack.git#4381ecaeb649dd9b34698fe9350fee4deb744a6b"
+source = "git+https://github.com/wavey-ai/http-pack.git#fa435ca8f49ebf2970dbbacde432440612753210"
 dependencies = [
  "bytes",
  "h3",
@@ -2064,7 +2066,7 @@ version = "0.50.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7957b9740744892f114936ab4a57b3f487491bbeafaf8083688b16841a4240e5"
 dependencies = [
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -2815,7 +2817,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.12.1",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -3524,7 +3526,7 @@ dependencies = [
  "getrandom 0.4.2",
  "once_cell",
  "rustix 1.1.4",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -4019,6 +4021,7 @@ checksum = "8ecb6da28b8a351d773b68d5825ac39017e680750f980f3a1a85cd8dd28a47c1"
 [[package]]
 name = "upload-response"
 version = "0.1.0"
+source = "git+https://github.com/wavey-ai/web-services.git#bdfbdde63f989e5a5a645a8565d0d788287bf711"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4221,6 +4224,7 @@ dependencies = [
 [[package]]
 name = "web-service"
 version = "0.1.0"
+source = "git+https://github.com/wavey-ai/web-services.git#bdfbdde63f989e5a5a645a8565d0d788287bf711"
 dependencies = [
  "anyhow",
  "async-trait",
