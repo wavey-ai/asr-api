@@ -9,29 +9,41 @@ name = "cohere-debug"
 path = "src/bin/cohere-debug/main.rs"
 required-features = ["gpu-backend", "audio-decoder"]
 
+[[bin]]
+name = "timestamp-validate"
+path = "src/bin/timestamp-validate/main.rs"
+required-features = ["cohere-backend", "parakeet-backend", "audio-decoder"]
+
 [features]
 default = ["cohere-backend", "audio-decoder"]
 gpu-backend = []
 cohere-backend = [
     "gpu-backend",
+    "dep:mel_spec",
     "dep:ort",
     "dep:rustfft",
     "dep:tokenizers",
 ]
 cohere-mlx = [
     "gpu-backend",
-    "dep:cohere-transcribe-rs",
+    "dep:rustfft",
+]
+parakeet-backend = [
+    "gpu-backend",
+    "dep:asr-onnx",
+    "dep:mel_spec",
+    "dep:rustfft",
 ]
 audio-decoder = ["dep:av-api", "dep:soundkit", "dep:soundkit-decoder"]
 
 [dependencies]
 anyhow = "1.0"
+asr-onnx = { path = "../asr-onnx", optional = true }
 async-trait = "0.1"
 av-api = { git = "https://github.com/wavey-ai/av-api.git", optional = true }
 bytes = "1"
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 clap = { version = "4.5", features = ["derive", "env"] }
-cohere-transcribe-rs = { git = "https://github.com/second-state/cohere_transcribe_rs.git", rev = "d7fd40d520f4c52f2f165b40b9e1f6bce78c34a9", default-features = false, features = ["mlx"], optional = true }
 crossbeam-channel = "0.5"
 dotenvy = "0.15"
 futures-util = "0.3"
@@ -41,6 +53,7 @@ hyper = { version = "1", features = ["full"] }
 hyper-util = { version = "0.1", features = ["full"] }
 http = "1"
 http-pack = { git = "https://github.com/wavey-ai/http-pack.git", default-features = false }
+mel_spec = { path = "../mel-spec", default-features = false, optional = true }
 ndarray = "0.17"
 reqwest = { version = "0.12", features = ["rustls-tls", "http2"] }
 ort = { git = "https://github.com/pykeio/ort.git", rev = "8724e89ff005ebef4339d7280ff592837404a98d", default-features = false, features = [

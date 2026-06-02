@@ -3,18 +3,25 @@ pub mod asr;
 pub mod chunking;
 #[cfg(feature = "cohere-backend")]
 pub mod cohere;
+#[cfg(any(feature = "cohere-backend", feature = "cohere-mlx"))]
+pub(crate) mod cohere_frontend;
 #[cfg(feature = "cohere-mlx")]
 pub mod cohere_mlx;
 pub mod config;
+#[cfg(feature = "cohere-backend")]
+pub(crate) mod ctc_align;
 #[cfg(feature = "audio-decoder")]
 pub mod decoder;
 pub mod deepgram;
 pub mod ids;
 pub mod ingress;
+#[cfg(feature = "parakeet-backend")]
+pub mod parakeet;
 pub mod pcm;
 pub mod processing;
 pub mod protocol;
 pub mod router;
+pub(crate) mod timestamps;
 #[cfg(feature = "gpu-backend")]
 pub mod worker;
 

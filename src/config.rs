@@ -9,6 +9,7 @@ pub const ASR_SAMPLE_RATE: u32 = 16_000;
 pub const DEFAULT_COHERE_ONNX_MODEL_NAME: &str = "wavey-cohere-transcribe-onnx";
 pub const DEFAULT_COHERE_MLX_MODEL_NAME: &str = "wavey-cohere-transcribe-mlx";
 pub const DEFAULT_COHERE_MODEL_NAME: &str = DEFAULT_COHERE_ONNX_MODEL_NAME;
+pub const DEFAULT_PARAKEET_ONNX_MODEL_NAME: &str = "wavey-parakeet-tdt-onnx";
 pub const DEFAULT_MODEL_NAME: &str = DEFAULT_COHERE_MODEL_NAME;
 pub const DEFAULT_LANGUAGE: &str = "en";
 
@@ -30,18 +31,21 @@ pub enum AppRole {
 pub enum AsrModelProvider {
     Auto,
     Cohere,
+    Parakeet,
 }
 
 impl AsrModelProvider {
     pub fn default_model_name(self) -> &'static str {
         match self {
             Self::Auto | Self::Cohere => default_cohere_model_name(),
+            Self::Parakeet => DEFAULT_PARAKEET_ONNX_MODEL_NAME,
         }
     }
 
     pub fn default_model_arch(self) -> &'static str {
         match self {
             Self::Auto | Self::Cohere => "cohere-transcribe-seq2seq",
+            Self::Parakeet => "parakeet-tdt",
         }
     }
 }
@@ -296,6 +300,19 @@ impl AppConfig {
                             ],
                         )?;
                     }
+                }
+                AsrModelProvider::Parakeet => {
+                    ensure_all_exists(
+                        model_dir,
+                        &[
+                            "encoder.onnx",
+                            "decoder.onnx",
+                            "joint.enc.onnx",
+                            "joint.pred.onnx",
+                            "joint.joint_net.onnx",
+                            "tokens.txt",
+                        ],
+                    )?;
                 }
                 AsrModelProvider::Auto => {
                     unreachable!("model provider should resolve before validation")

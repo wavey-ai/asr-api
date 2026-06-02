@@ -1,6 +1,11 @@
 use crate::asr::WindowTranscription;
-use crate::chunking::TimedWord;
+use crate::cohere_frontend::{CohereFrontend, CoherePreprocessorConfig};
+use crate::config::ASR_SAMPLE_RATE;
 use crate::config::DEFAULT_LANGUAGE;
+use crate::ctc_align::ParakeetCtcAligner;
+use crate::timestamps::{
+    duration_ms_for_samples, estimate_word_timestamps_from_tokens, TokenTextSpan,
+};
 use anyhow::{Context, Result};
 use crossbeam_channel::{bounded, Receiver, Sender};
 use ndarray::{Array2, Array3, ArrayD, Axis, Ix1};
@@ -13,13 +18,10 @@ use ort::session::builder::GraphOptimizationLevel;
 use ort::session::Session;
 use ort::value::Tensor as OrtTensor;
 use ort::value::ValueType;
-use rustfft::num_complex::Complex32;
-use rustfft::FftPlanner;
 use serde::Deserialize;
 use std::cmp;
 use std::collections::{HashMap, HashSet};
 use std::env;
-use std::f32::consts::PI;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -30,19 +32,6 @@ use tokenizers::Tokenizer;
 use tokio::sync::oneshot;
 use tracing::{info, warn};
 static ORT_INIT: OnceLock<Result<(), String>> = OnceLock::new();
-
-#[derive(Debug, Deserialize)]
-struct PreprocessorConfig {
-    dither: f32,
-    feature_size: usize,
-    n_fft: usize,
-    n_window_size: usize,
-    n_window_stride: usize,
-    normalize: String,
-    padding_value: f32,
-    sampling_rate: u32,
-    window: String,
-}
 
 #[derive(Debug, Deserialize)]
 struct GenerationConfig {
@@ -176,6 +165,7 @@ enum CohereProfileTarget {
 pub struct CohereBackend {
     frontend: CohereFrontend,
     decoder: CohereDecoderClient,
+    ctc_aligner: Option<Arc<ParakeetCtcAligner>>,
 }
 
 impl CohereBackend {
@@ -186,7 +176,7 @@ impl CohereBackend {
         max_new_tokens: usize,
     ) -> Result<Self> {
         let preprocessor =
-            load_json::<PreprocessorConfig>(&model_dir.join("preprocessor_config.json"))
+            load_json::<CoherePreprocessorConfig>(&model_dir.join("preprocessor_config.json"))
                 .context("failed to load Cohere preprocessor_config.json")?;
         let generation = load_json::<GenerationConfig>(&model_dir.join("generation_config.json"))
             .context("failed to load Cohere generation_config.json")?;
@@ -240,7 +230,14 @@ impl CohereBackend {
             decode,
             runtime,
         )?;
-        Ok(Self { frontend, decoder })
+        let ctc_aligner = ParakeetCtcAligner::from_env(device_ids)
+            .context("failed to initialize Parakeet CTC timestamp aligner")?
+            .map(Arc::new);
+        Ok(Self {
+            frontend,
+            decoder,
+            ctc_aligner,
+        })
     }
 
     pub async fn transcribe_window(
@@ -248,12 +245,52 @@ impl CohereBackend {
         samples: Vec<f32>,
         _seq: u32,
     ) -> Result<WindowTranscription> {
+        let duration_ms = duration_ms_for_samples(samples.len(), ASR_SAMPLE_RATE);
         let features = self.frontend.compute(&samples)?;
-        let text = self.decoder.decode(features).await?;
-        Ok(WindowTranscription {
-            text,
-            words: Vec::<TimedWord>::new(),
-        })
+        let mut result = self.decoder.decode(features, duration_ms).await?;
+
+        if let Some(aligner) = self.ctc_aligner.clone() {
+            let text = result.text.clone();
+            let align_started = Instant::now();
+            match tokio::task::spawn_blocking(move || aligner.align(&samples, &text)).await {
+                Ok(Ok(words)) if !words.is_empty() => {
+                    if env_var_truthy("ASR_CTC_ALIGN_TIMINGS") {
+                        eprintln!(
+                            "ctc_align_timing total_ms={:.2} words={}",
+                            align_started.elapsed().as_secs_f64() * 1000.0,
+                            words.len()
+                        );
+                    }
+                    result.words = words;
+                }
+                Ok(Ok(_)) => {
+                    if env_var_truthy("ASR_CTC_ALIGN_TIMINGS") {
+                        eprintln!("ctc_align_timing status=empty_words");
+                    }
+                    warn!("Parakeet CTC timestamp aligner returned no words; keeping token-frequency Cohere timestamps");
+                }
+                Ok(Err(error)) => {
+                    if env_var_truthy("ASR_CTC_ALIGN_TIMINGS") {
+                        eprintln!("ctc_align_timing status=error error={error:?}");
+                    }
+                    warn!(
+                        error = %error,
+                        "Parakeet CTC timestamp alignment failed; keeping token-frequency Cohere timestamps"
+                    );
+                }
+                Err(error) => {
+                    if env_var_truthy("ASR_CTC_ALIGN_TIMINGS") {
+                        eprintln!("ctc_align_timing status=task_error error={error:?}");
+                    }
+                    warn!(
+                        error = %error,
+                        "Parakeet CTC timestamp alignment task failed; keeping token-frequency Cohere timestamps"
+                    );
+                }
+            }
+        }
+
+        Ok(result)
     }
 }
 
@@ -264,18 +301,19 @@ struct CohereDecoderClient {
 }
 
 struct CohereDecoderState {
-    pending: HashMap<u64, oneshot::Sender<std::result::Result<String, String>>>,
-    completed: HashMap<u64, std::result::Result<String, String>>,
+    pending: HashMap<u64, oneshot::Sender<std::result::Result<WindowTranscription, String>>>,
+    completed: HashMap<u64, std::result::Result<WindowTranscription, String>>,
 }
 
 struct CohereJob {
     job_id: u64,
     features: Array2<f32>,
+    duration_ms: u32,
 }
 
 struct CohereJobResult {
     job_id: u64,
-    result: std::result::Result<String, String>,
+    result: std::result::Result<WindowTranscription, String>,
 }
 
 impl CohereDecoderClient {
@@ -347,7 +385,7 @@ impl CohereDecoderClient {
         })
     }
 
-    async fn decode(&self, features: Array2<f32>) -> Result<String> {
+    async fn decode(&self, features: Array2<f32>, duration_ms: u32) -> Result<WindowTranscription> {
         let job_id = self.next_id.fetch_add(1, Ordering::SeqCst);
         let (tx, rx) = oneshot::channel();
         {
@@ -358,7 +396,11 @@ impl CohereDecoderClient {
             guard.pending.insert(job_id, tx);
         }
 
-        if let Err(error) = self.job_tx.send(CohereJob { job_id, features }) {
+        if let Err(error) = self.job_tx.send(CohereJob {
+            job_id,
+            features,
+            duration_ms,
+        }) {
             self.state
                 .lock()
                 .expect("cohere state mutex poisoned")
@@ -382,7 +424,7 @@ fn worker_loop(
 ) {
     for job in job_rx {
         let result = worker
-            .decode(job.features)
+            .decode(job.features, job.duration_ms)
             .map_err(|error| error.to_string());
         let _ = result_tx.send(CohereJobResult {
             job_id: job.job_id,
@@ -515,7 +557,7 @@ impl CohereWorker {
         })
     }
 
-    fn decode(&mut self, features: Array2<f32>) -> Result<String> {
+    fn decode(&mut self, features: Array2<f32>, duration_ms: u32) -> Result<WindowTranscription> {
         let timings_enabled = env_var_truthy("ASR_COHERE_TIMINGS");
         let decode_started = Instant::now();
         let feature_shape = features.dim();
@@ -560,6 +602,15 @@ impl CohereWorker {
         let encoded_length = *encoded_length_arr
             .first()
             .context("Cohere encoded_length output was empty")?;
+        if let Some(path) = env_var_nonempty("ASR_COHERE_DUMP_ENCODER") {
+            dump_f32_array(Path::new(&path), &encoder_hidden_states)
+                .with_context(|| format!("failed to dump Cohere encoder output to {path}"))?;
+            eprintln!(
+                "cohere_encoder_dump={} shape={:?}",
+                path,
+                encoder_hidden_states.shape()
+            );
+        }
         let encoder_extract_s = encoder_extract_started.elapsed().as_secs_f64();
 
         let prompt_len = self.decode.prompt_ids.len();
@@ -606,6 +657,24 @@ impl CohereWorker {
             self_values.push(extract_array_f32(&prefill_outputs[base + 1])?);
             cross_keys.push(extract_array_f32(&prefill_outputs[base + 2])?);
             cross_values.push(extract_array_f32(&prefill_outputs[base + 3])?);
+        }
+        if let Some(path) = env_var_nonempty("ASR_COHERE_DUMP_SELF_KEY0") {
+            dump_f32_array(Path::new(&path), &self_keys[0])
+                .with_context(|| format!("failed to dump Cohere self key to {path}"))?;
+            eprintln!(
+                "cohere_self_key0_dump={} shape={:?}",
+                path,
+                self_keys[0].shape()
+            );
+        }
+        if let Some(path) = env_var_nonempty("ASR_COHERE_DUMP_CROSS_KEY0") {
+            dump_f32_array(Path::new(&path), &cross_keys[0])
+                .with_context(|| format!("failed to dump Cohere cross key to {path}"))?;
+            eprintln!(
+                "cohere_cross_key0_dump={} shape={:?}",
+                path,
+                cross_keys[0].shape()
+            );
         }
         let prefill_extract_s = prefill_extract_started.elapsed().as_secs_f64();
 
@@ -677,12 +746,22 @@ impl CohereWorker {
         }
 
         let token_decode_started = Instant::now();
+        if env_var_truthy("ASR_COHERE_DEBUG_TOKENS") {
+            eprintln!("cohere_tokens={generated_ids:?}");
+        }
         let text = self
             .tokenizer
             .decode(&generated_ids, true)
             .map(|text| text.trim().to_string())
             .map_err(|error| anyhow::anyhow!(error.to_string()))
             .context("failed to decode Cohere token ids")?;
+        let token_spans = decoded_token_spans(&self.tokenizer, &generated_ids, &text);
+        let words = estimate_word_timestamps_from_tokens(
+            &text,
+            &token_spans,
+            generated_ids.len(),
+            duration_ms,
+        );
         let token_decode_s = token_decode_started.elapsed().as_secs_f64();
 
         if timings_enabled {
@@ -703,8 +782,34 @@ impl CohereWorker {
             );
         }
 
-        Ok(text)
+        Ok(WindowTranscription { text, words })
     }
+}
+
+fn decoded_token_spans(
+    tokenizer: &Tokenizer,
+    generated_ids: &[u32],
+    text: &str,
+) -> Vec<TokenTextSpan> {
+    let mut spans = Vec::new();
+    let mut previous_end = 0usize;
+
+    for end in 1..=generated_ids.len() {
+        let Ok(prefix) = tokenizer.decode(&generated_ids[..end], true) else {
+            continue;
+        };
+        let prefix_end = prefix.trim_start().len().min(text.len());
+        if prefix_end > previous_end {
+            spans.push(TokenTextSpan {
+                token_index: end - 1,
+                start: previous_end,
+                end: prefix_end,
+            });
+            previous_end = prefix_end;
+        }
+    }
+
+    spans
 }
 
 fn extract_array_f32(value: &ort::value::Value) -> Result<ArrayD<f32>> {
@@ -712,6 +817,15 @@ fn extract_array_f32(value: &ort::value::Value) -> Result<ArrayD<f32>> {
         .try_extract_array::<f32>()
         .map(|array| array.to_owned())
         .map_err(|error| anyhow::anyhow!(error.to_string()))
+}
+
+fn dump_f32_array(path: &Path, array: &ArrayD<f32>) -> Result<()> {
+    let mut bytes = Vec::with_capacity(array.len() * std::mem::size_of::<f32>());
+    for value in array.iter() {
+        bytes.extend_from_slice(&value.to_le_bytes());
+    }
+    fs::write(path, bytes)?;
+    Ok(())
 }
 
 fn argmax_last_token(logits: &ArrayD<f32>) -> Result<i64> {
@@ -1054,7 +1168,7 @@ fn coreml_provider(config: &CohereCoreMlConfig) -> ExecutionProviderDispatch {
 impl CohereRuntimeConfig {
     fn from_env(
         model_dir: &Path,
-        preprocessor: &PreprocessorConfig,
+        preprocessor: &CoherePreprocessorConfig,
         model_config: &CohereModelConfig,
         prompt_len: usize,
         max_new_tokens: usize,
@@ -1161,7 +1275,7 @@ fn parse_coreml_compute_units(value: &str) -> Option<CohereCoreMlComputeUnits> {
 impl CohereTensorRtConfig {
     fn from_env(
         model_dir: &Path,
-        preprocessor: &PreprocessorConfig,
+        preprocessor: &CoherePreprocessorConfig,
         model_config: &CohereModelConfig,
         prompt_len: usize,
         max_new_tokens: usize,
@@ -1357,241 +1471,6 @@ impl CohereTensorRtConfig {
             None
         } else {
             Some(entries.join(","))
-        }
-    }
-}
-
-struct CohereFrontend {
-    sample_rate: u32,
-    n_fft: usize,
-    window_size: usize,
-    hop_size: usize,
-    feature_size: usize,
-    padding_value: f32,
-    dither: f32,
-    mel_filters: Vec<f32>,
-    fft_bins: usize,
-    window: Vec<f32>,
-    fft: Arc<dyn rustfft::Fft<f32>>,
-}
-
-impl CohereFrontend {
-    fn new(config: PreprocessorConfig) -> Result<Self> {
-        anyhow::ensure!(
-            config.sampling_rate == 16_000,
-            "unsupported Cohere sampling rate {}; expected 16000",
-            config.sampling_rate
-        );
-        anyhow::ensure!(
-            config.window == "hann",
-            "unsupported Cohere window {}; expected hann",
-            config.window
-        );
-        anyhow::ensure!(
-            config.normalize == "per_feature",
-            "unsupported Cohere normalization {}; expected per_feature",
-            config.normalize
-        );
-
-        let mut planner = FftPlanner::<f32>::new();
-        let fft = planner.plan_fft_forward(config.n_fft);
-        let fft_bins = (config.n_fft / 2) + 1;
-        let window = build_centered_hann_window(config.n_fft, config.n_window_size);
-        let mel_filters = build_slaney_mel_filters(
-            config.sampling_rate,
-            config.n_fft,
-            config.feature_size,
-            0.0,
-            (config.sampling_rate as f32) / 2.0,
-        );
-        Ok(Self {
-            sample_rate: config.sampling_rate,
-            n_fft: config.n_fft,
-            window_size: config.n_window_size,
-            hop_size: config.n_window_stride,
-            feature_size: config.feature_size,
-            padding_value: config.padding_value,
-            dither: config.dither,
-            mel_filters,
-            fft_bins,
-            window,
-            fft,
-        })
-    }
-
-    fn compute(&self, samples: &[f32]) -> Result<Array2<f32>> {
-        if samples.is_empty() {
-            return Ok(Array2::zeros((self.feature_size, 0)));
-        }
-
-        let seq_len = samples.len() / self.hop_size;
-        if seq_len == 0 {
-            return Ok(Array2::zeros((self.feature_size, 0)));
-        }
-
-        let mut waveform = samples.to_vec();
-        if self.dither > 0.0 {
-            apply_dither(&mut waveform, self.dither);
-        }
-        apply_preemphasis(&mut waveform, 0.97);
-
-        let pad = self.n_fft / 2;
-        let mut padded = vec![0.0f32; waveform.len() + (pad * 2)];
-        padded[pad..pad + waveform.len()].copy_from_slice(&waveform);
-
-        let mut features = vec![0.0f32; self.feature_size * seq_len];
-        let mut fft_input = vec![Complex32::new(0.0, 0.0); self.n_fft];
-        for frame_idx in 0..seq_len {
-            let start = frame_idx * self.hop_size;
-            let frame = &padded[start..start + self.n_fft];
-            for i in 0..self.n_fft {
-                fft_input[i] = Complex32::new(frame[i] * self.window[i], 0.0);
-            }
-            self.fft.process(&mut fft_input);
-
-            let mut power = vec![0.0f32; self.fft_bins];
-            for (bin_idx, value) in fft_input.iter().take(self.fft_bins).enumerate() {
-                power[bin_idx] = value.norm_sqr();
-            }
-
-            for mel_idx in 0..self.feature_size {
-                let filter =
-                    &self.mel_filters[(mel_idx * self.fft_bins)..((mel_idx + 1) * self.fft_bins)];
-                let mut energy = 0.0f32;
-                for (weight, bin_power) in filter.iter().zip(power.iter()) {
-                    energy += *weight * *bin_power;
-                }
-                let logged = (energy + 2f32.powi(-24)).ln();
-                features[(mel_idx * seq_len) + frame_idx] = logged;
-            }
-        }
-
-        normalize_per_feature(
-            &mut features,
-            self.feature_size,
-            seq_len,
-            self.padding_value,
-        );
-        Array2::from_shape_vec((self.feature_size, seq_len), features)
-            .context("failed to shape Cohere mel features")
-    }
-}
-
-fn apply_dither(waveform: &mut [f32], scale: f32) {
-    let mut state = waveform.len() as u64 + 1;
-    for sample in waveform {
-        state ^= state << 13;
-        state ^= state >> 7;
-        state ^= state << 17;
-        let uniform = ((state as f64 / u64::MAX as f64) as f32) - 0.5;
-        *sample += uniform * 2.0 * scale;
-    }
-}
-
-fn apply_preemphasis(waveform: &mut [f32], coeff: f32) {
-    if waveform.is_empty() {
-        return;
-    }
-    let mut prev = waveform[0];
-    for sample in waveform.iter_mut().skip(1) {
-        let current = *sample;
-        *sample = current - (coeff * prev);
-        prev = current;
-    }
-}
-
-fn build_centered_hann_window(n_fft: usize, win_length: usize) -> Vec<f32> {
-    let mut window = vec![0.0f32; n_fft];
-    let offset = (n_fft.saturating_sub(win_length)) / 2;
-    if win_length <= 1 {
-        return window;
-    }
-    for i in 0..win_length {
-        let phase = (2.0 * PI * i as f32) / (win_length as f32 - 1.0);
-        window[offset + i] = 0.5 - (0.5 * phase.cos());
-    }
-    window
-}
-
-fn build_slaney_mel_filters(
-    sample_rate: u32,
-    n_fft: usize,
-    n_mels: usize,
-    f_min: f32,
-    f_max: f32,
-) -> Vec<f32> {
-    let fft_bins = (n_fft / 2) + 1;
-    let mel_min = hz_to_mel(f_min);
-    let mel_max = hz_to_mel(f_max);
-    let mut mel_points = Vec::with_capacity(n_mels + 2);
-    for idx in 0..(n_mels + 2) {
-        let ratio = idx as f32 / (n_mels + 1) as f32;
-        mel_points.push(mel_to_hz(mel_min + ((mel_max - mel_min) * ratio)));
-    }
-
-    let mut filters = vec![0.0f32; n_mels * fft_bins];
-    for mel_idx in 0..n_mels {
-        let lower = mel_points[mel_idx];
-        let center = mel_points[mel_idx + 1];
-        let upper = mel_points[mel_idx + 2];
-        let enorm = 2.0 / (upper - lower).max(f32::EPSILON);
-        for bin_idx in 0..fft_bins {
-            let freq = (sample_rate as f32 / n_fft as f32) * bin_idx as f32;
-            let lower_slope = (freq - lower) / (center - lower).max(f32::EPSILON);
-            let upper_slope = (upper - freq) / (upper - center).max(f32::EPSILON);
-            let weight = lower_slope.min(upper_slope).max(0.0) * enorm;
-            filters[(mel_idx * fft_bins) + bin_idx] = weight;
-        }
-    }
-    filters
-}
-
-fn hz_to_mel(freq_hz: f32) -> f32 {
-    let f_sp = 200.0 / 3.0;
-    let min_log_hz = 1000.0;
-    let min_log_mel = min_log_hz / f_sp;
-    let logstep = (6.4f32).ln() / 27.0;
-    if freq_hz < min_log_hz {
-        freq_hz / f_sp
-    } else {
-        min_log_mel + (freq_hz / min_log_hz).ln() / logstep
-    }
-}
-
-fn mel_to_hz(mel: f32) -> f32 {
-    let f_sp = 200.0 / 3.0;
-    let min_log_hz = 1000.0;
-    let min_log_mel = min_log_hz / f_sp;
-    let logstep = (6.4f32).ln() / 27.0;
-    if mel < min_log_mel {
-        mel * f_sp
-    } else {
-        min_log_hz * (logstep * (mel - min_log_mel)).exp()
-    }
-}
-
-fn normalize_per_feature(features: &mut [f32], n_mels: usize, seq_len: usize, pad_value: f32) {
-    if seq_len == 0 {
-        return;
-    }
-    for mel_idx in 0..n_mels {
-        let row = &mut features[(mel_idx * seq_len)..((mel_idx + 1) * seq_len)];
-        let mean = row.iter().sum::<f32>() / seq_len as f32;
-        let denom = (seq_len as f32 - 1.0).max(1.0);
-        let variance = row
-            .iter()
-            .map(|value| {
-                let centered = *value - mean;
-                centered * centered
-            })
-            .sum::<f32>()
-            / denom;
-        let std = variance.sqrt() + 1e-5;
-        for value in row.iter_mut() {
-            *value = (*value - mean) / std;
-            if !value.is_finite() {
-                *value = pad_value;
-            }
         }
     }
 }

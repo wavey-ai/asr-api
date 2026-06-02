@@ -9,10 +9,10 @@ fn main() {
 }
 
 fn link_clang_runtime() {
-    let output = std::process::Command::new("clang")
+    let Ok(output) = std::process::Command::new("clang")
         .args(["--print-file-name", "libclang_rt.osx.a"])
-        .output();
-    let Ok(output) = output else {
+        .output()
+    else {
         return;
     };
     let Ok(path) = String::from_utf8(output.stdout) else {

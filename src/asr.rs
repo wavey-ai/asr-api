@@ -4,6 +4,8 @@ use crate::cohere::CohereBackend as CohereAsrBackend;
 #[cfg(feature = "cohere-mlx")]
 use crate::cohere_mlx::CohereMlxBackend;
 use crate::config::AsrModelProvider;
+#[cfg(feature = "parakeet-backend")]
+use crate::parakeet::ParakeetBackend;
 use anyhow::Result;
 use std::env;
 use std::path::Path;
@@ -23,6 +25,8 @@ enum BackendImpl {
     Cohere(CohereAsrBackend),
     #[cfg(feature = "cohere-mlx")]
     CohereMlx(CohereMlxBackend),
+    #[cfg(feature = "parakeet-backend")]
+    Parakeet(ParakeetBackend),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -77,6 +81,23 @@ impl AsrBackend {
                     }
                 }
             },
+            AsrModelProvider::Parakeet => {
+                #[cfg(feature = "parakeet-backend")]
+                {
+                    BackendImpl::Parakeet(ParakeetBackend::new(
+                        model_dir,
+                        device_ids,
+                        onnx_sessions,
+                    )?)
+                }
+                #[cfg(not(feature = "parakeet-backend"))]
+                {
+                    let _ = (model_dir, device_ids, onnx_sessions);
+                    anyhow::bail!(
+                        "ASR_MODEL_PROVIDER=parakeet requested, but this asr-api build does not include the parakeet-backend feature"
+                    );
+                }
+            }
         };
         Ok(Self { inner })
     }
@@ -91,6 +112,8 @@ impl AsrBackend {
             BackendImpl::Cohere(backend) => backend.transcribe_window(samples, seq).await,
             #[cfg(feature = "cohere-mlx")]
             BackendImpl::CohereMlx(backend) => backend.transcribe_window(samples, seq).await,
+            #[cfg(feature = "parakeet-backend")]
+            BackendImpl::Parakeet(backend) => backend.transcribe_window(samples, seq).await,
         }
     }
 }

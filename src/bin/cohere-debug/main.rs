@@ -17,6 +17,8 @@ struct Args {
     model_dir: PathBuf,
     #[arg(long)]
     audio_path: PathBuf,
+    #[arg(long, value_enum, default_value_t = AsrModelProvider::Cohere)]
+    model_provider: AsrModelProvider,
     #[arg(long, default_value = "0")]
     device_ids: String,
     #[arg(long, default_value_t = 1)]
@@ -68,7 +70,7 @@ async fn main() -> Result<()> {
     let init_started = Instant::now();
     let backend = AsrBackend::new(
         &args.model_dir,
-        AsrModelProvider::Cohere,
+        args.model_provider,
         &device_ids,
         args.onnx_sessions,
         args.max_new_tokens,

@@ -1,15 +1,16 @@
 # asr-api
 
-`asr-api` provides a Deepgram-compatible `/v1/listen` API for Cohere
-Transcribe. It supports buffered uploads, streaming request bodies, and
-WebSocket audio, normalizes input audio to mono `16 kHz` PCM, runs inference
-with either Cohere ONNX Runtime or Cohere MLX, and returns
-Deepgram-compatible JSON.
+`asr-api` provides a Deepgram-compatible `/v1/listen` API for ASR backends
+including Cohere Transcribe and Parakeet/TDT. asr-api supports buffered HTTP
+uploads, streaming HTTP request bodies, WebSocket audio, and WebTransport over
+HTTP/3. It normalizes input audio to mono `16 kHz` PCM, runs inference through
+the configured backend, and returns Deepgram-compatible JSON.
 
 ## Useful For
 
-- Deepgram-compatible ASR where clients send buffered uploads, streaming
-  request bodies, or WebSocket audio to `/v1/listen`.
+- Deepgram-compatible ASR where clients send buffered HTTP uploads, streaming
+  HTTP request bodies, WebSocket audio, or WebTransport over HTTP/3 to
+  `/v1/listen`.
 - GPU service experiments where ingress, decode, model execution, and response
   collection need to be measured as separate stages.
 - Production-style benchmarking of Cohere Transcribe on Ada-class NVIDIA GPUs
@@ -25,9 +26,9 @@ Deepgram-compatible JSON.
 The runtime has three roles:
 
 1. `ingress`: accepts `/v1/listen` through the enabled `web-service`
-   transports, including request-body streams and WebSocket audio. It writes
-   request bytes and metadata into `upload-response` and waits for a worker
-   response.
+   transports, including buffered HTTP uploads, streaming HTTP request bodies,
+   WebSocket audio, and WebTransport over HTTP/3. It writes request bytes and
+   metadata into `upload-response` and waits for a worker response.
 2. `decoder`: CPU processing stage. It discovers ingress origins, claims raw
    request streams, decodes/resamples/downmixes them to mono `16 kHz` `f32`,
    and writes canonical PCM to the `decoded` stage lane.
@@ -38,6 +39,9 @@ The runtime has three roles:
 The split keeps model libraries out of ingress, keeps audio codec work off the
 GPU worker, and makes worker throughput visible at the cache/stage boundary.
 The handoff is `upload-response`; there is no Redis sidecar or external queue.
+
+See [ASR Capability Inventory](docs/asr-capability-inventory.md) for the
+current Cohere and Parakeet backend capability matrix.
 
 ## Build
 
@@ -50,13 +54,21 @@ cargo build --no-default-features --features cohere-backend,audio-decoder
 Apple Silicon MLX build:
 
 ```bash
+cd apple && swift build -c release && cd ..
+
 MACOSX_DEPLOYMENT_TARGET=14.0 \
   cargo build --release --no-default-features --features cohere-mlx,audio-decoder \
   --bin cohere-debug
 ```
 
-Both backends can be compiled together; ONNX remains the default runtime unless
-`ASR_COHERE_BACKEND=mlx` is set.
+Parakeet ONNX/TDT build:
+
+```bash
+cargo build --no-default-features --features parakeet-backend,audio-decoder
+```
+
+Backends can be compiled together; Cohere ONNX remains the default runtime
+unless `ASR_MODEL_PROVIDER` or `ASR_COHERE_BACKEND` selects another path.
 
 ## Model Artifacts
 
@@ -81,6 +93,20 @@ Cohere MLX expects:
 - `model.safetensors`
 - `config.json`
 - `vocab.json`
+
+The `cohere-mlx` Rust backend invokes the owned Swift runtime under `apple/`.
+Build that package with `swift build -c release` or set
+`ASR_MLX_TRANSCRIBE_BIN`. The Swift package contains the owned Cohere
+encoder/decoder MLX graph and does not use `cohere-transcribe-rs`.
+
+Parakeet ONNX/TDT expects:
+
+- `encoder.onnx`
+- `decoder.onnx`
+- `joint.enc.onnx`
+- `joint.pred.onnx`
+- `joint.joint_net.onnx`
+- `tokens.txt`
 
 The ONNX and MLX artifacts can live in the same model directory when a host
 needs both paths. Generate `vocab.json` for MLX from `tokenizer.model`:
@@ -114,7 +140,6 @@ Core service:
 - `TLS_CERT_PATH` / `TLS_KEY_PATH`: optional PEM paths; if omitted the
   workspace default local TLS material is used
 - `ASR_MODEL_DIR`: model directory, required for `worker`
-- `ASR_MODEL_PROVIDER`: `auto` or `cohere`, default `auto`
 - `ASR_DEVICE_IDS`: comma-separated GPU ids, default `0`
 - `ASR_ONNX_SESSIONS`: ONNX sessions per device, default `1`
 - `ASR_COHERE_MAX_NEW_TOKENS`: generation cap, default `384`
@@ -132,6 +157,7 @@ Audio/chunking:
 
 Backend selection and ONNX Runtime:
 
+- `ASR_MODEL_PROVIDER`: `auto`, `cohere`, or `parakeet`; default `auto`
 - `ASR_COHERE_BACKEND`: `onnx` or `mlx`, default `onnx`
 - `ASR_ONNX_RUNTIME_LIB` / `ORT_DYLIB_PATH`: explicit ONNX Runtime dynamic
   library path
@@ -144,6 +170,65 @@ Backend selection and ONNX Runtime:
   execution
 - `ASR_COHERE_INTER_THREADS`: ONNX inter-op threads when graph-level parallel
   execution is enabled
+
+Parakeet:
+
+- `ASR_ONNX_FORCE_CPU`: force the Parakeet ONNX/TDT path to CPU EP
+- `ASR_PARAKEET_TIMINGS`: emit per-window Parakeet timing lines to stderr
+- `ASR_PARAKEET_N_MELS`: default comes from `asr-onnx` config, currently `128`
+- `ASR_PARAKEET_N_FFT`: default `512`
+- `ASR_PARAKEET_WIN_LENGTH`: default `400`
+- `ASR_PARAKEET_HOP_LENGTH`: default `160`
+- `ASR_PARAKEET_PAD_TO`: default `0`; set `16` to mimic NeMo padding
+
+Cohere word timestamps default to a generated-token frequency estimate. They
+are monotonic and suitable for Deepgram-compatible `words` output, but they are
+not model-derived CTC/TDT alignments.
+
+Cohere ONNX can instead attach a Parakeet CTC ONNX forced-alignment
+side-channel:
+
+- `ASR_COHERE_TIMESTAMP_BACKEND`: `token-frequency` or `parakeet-ctc`
+- `ASR_CTC_ALIGN_MODEL_DIR`: Parakeet CTC ONNX model directory
+- `ASR_CTC_ALIGN_ONNX_FILE`: default `onnx/model_int8.onnx`
+- `ASR_CTC_ALIGN_EXECUTION_PROVIDER`: `auto`, `tensorrt`, `cuda`, or `cpu`
+- `ASR_CTC_ALIGN_FORCE_CPU`: force CPU for local/macOS validation
+- `ASR_CTC_ALIGN_TRT_CACHE_DIR`: TensorRT engine/timing cache directory
+- `ASR_CTC_ALIGN_TRT_MIN_DURATION_S`, `ASR_CTC_ALIGN_TRT_OPT_DURATION_S`,
+  `ASR_CTC_ALIGN_TRT_MAX_DURATION_S`: TensorRT dynamic-shape profile window
+- `ASR_CTC_ALIGN_TRT_WORKSPACE_BYTES`: default `8 GiB`
+- `ASR_CTC_ALIGN_TRT_FP16`: default enabled
+- `ASR_CTC_ALIGN_TIMINGS`: emit CTC aligner timing/debug lines to stderr
+
+The local macOS validation path uses ONNX Runtime CPU. TensorRT is not a macOS
+path; build and benchmark TensorRT engines on a supported NVIDIA/CUDA host. The
+NVIDIA TensorRT support matrix lists Linux, Windows, SBSA, and JetPack targets,
+and no macOS target:
+https://docs.nvidia.com/deeplearning/tensorrt/latest/getting-started/support-matrix.html
+
+The validated local CTC aligner model is `onnx/model_int8.onnx` from
+`onnx-community/parakeet-ctc-0.6b-ONNX`. `onnx/model_q4f16.onnx` loaded on the
+M1 Mac CPU path but returned all-NaN logits on JFK, so it is not suitable for
+local CPU validation.
+
+Validate Cohere timestamps against Parakeet/TDT:
+
+```bash
+ASR_ONNX_RUNTIME_LIB=/opt/homebrew/lib/libonnxruntime.dylib \
+ASR_COHERE_FORCE_CPU=true \
+ASR_ONNX_FORCE_CPU=true \
+ASR_COHERE_TIMESTAMP_BACKEND=parakeet-ctc \
+ASR_CTC_ALIGN_MODEL_DIR=models/parakeet-ctc-0.6b-onnx \
+ASR_CTC_ALIGN_ONNX_FILE=onnx/model_int8.onnx \
+ASR_CTC_ALIGN_FORCE_CPU=true \
+cargo run --no-default-features \
+  --features cohere-backend,parakeet-backend,audio-decoder \
+  --bin timestamp-validate -- \
+  --cohere-model-dir models/cohere-transcribe-03-2026 \
+  --parakeet-model-dir models/parakeet-tdt-0.6b-v3 \
+  --audio-path ../whisper.cpp/samples/jfk.wav \
+  --device-ids ''
+```
 
 CoreML / Apple ONNX:
 
@@ -234,18 +319,14 @@ ASR_COHERE_COREML_CACHE_DIR=models/cohere-transcribe-03-2026/.coreml-cache-stati
   --max-new-tokens 64
 ```
 
-Apple MLX path:
+Apple MLX runtime bundle check:
 
 ```bash
-ASR_COHERE_BACKEND=mlx \
-ASR_COHERE_TIMINGS=true \
-  target/release/cohere-debug \
-  --model-dir models/cohere-transcribe-03-2026 \
-  --audio-path ../whisper.cpp/samples/jfk.wav \
-  --device-ids '' \
-  --max-new-tokens 64 \
-  --warmup 1 \
-  --repeat 5
+cd apple
+swift build -c release
+.build/release/asr-mlx-transcribe \
+  --check \
+  --model-dir ../models/cohere-transcribe-03-2026
 ```
 
 Local three-role stack:
@@ -431,7 +512,6 @@ and Harvard `*.s16le` PCM files submitted over HTTP/2 after warmup.
 | `asr-api` ONNX + CUDA EP | `1` worker x `1` ONNX session, TensorRT disabled | `100`, c=`1` | `100 / 0` | `11.33` | `8.81` | `52.23 ms` | `237.84 ms` | `10514 MiB` | `ASR_COHERE_TRT_COMPONENTS=none`; clean CUDA-only baseline. |
 | `asr-api` ONNX + CUDA EP | earlier CUDA baseline, `max_inflight=2` | `200`, c=`2` | `200 / 0` | `-` | `17.82` | `53.12 ms` | `255.94 ms` | `~10500 MiB` | User-run baseline before TensorRT tuning; load output did not include stage-window RTFx. |
 | `asr-api` ONNX + decoder-only TensorRT | TensorRT only on decoder components | `100`, c=`1` | `100 / 0` | `8.22` | `-` | `-` | `~332 ms` | `~9400 MiB` | Slower than CUDA-only and full TensorRT; not a useful target. |
-| Second State `cohere_transcribe_rs` | libtorch CUDA implementation | `100`, c=`1` | `100 / 0` | `-` | `10.99` | `-` | `~247.8 ms` | `~8700 MiB` | Baseline from `https://github.com/second-state/cohere_transcribe_rs`. |
 
 Capacity observations from the same host:
 
@@ -442,14 +522,11 @@ Capacity observations from the same host:
 | ONNX + CUDA EP | `1` worker x `2` ONNX sessions | A single worker with two CUDA sessions consumed about `20012 MiB`; effectively full-card. |
 | ONNX + CUDA EP | `2` workers x `2` ONNX sessions | Failed startup. One worker survived at about `20012 MiB`; the other failed initializing `decoder_cached_step` with a CUDA BFCArena allocation error for `67108864` bytes. |
 
-Memory efficiency matters more than the single-session footprint. The Second
-State libtorch CUDA baseline used less memory than plain ONNX CUDA EP for one
-request stream (`~8.7 GiB` vs `~10.5 GiB`), but it did not beat full TensorRT
-throughput. Full TensorRT used about `~5.1 GiB` for one hot 35s session and
-`18.2-18.7 GiB` for four total sessions, which is the tested path that kept the
-`20 GiB` Ada card below capacity while increasing useful concurrency. Plain
-ONNX CUDA EP filled the card at two sessions and failed at the four-session
-topology.
+Memory efficiency matters more than the single-session footprint. Full
+TensorRT used about `~5.1 GiB` for one hot 35s session and `18.2-18.7 GiB` for
+four total sessions, which is the tested path that kept the `20 GiB` Ada card
+below capacity while increasing useful concurrency. Plain ONNX CUDA EP filled
+the card at two sessions and failed at the four-session topology.
 
 The practical deployment conclusion from these measurements is that full
 TensorRT is both faster and more memory efficient on Ada. It is what makes four
@@ -520,7 +597,13 @@ cargo check --no-default-features \
 MACOSX_DEPLOYMENT_TARGET=14.0 \
   cargo check --no-default-features \
   --features cohere-mlx,audio-decoder \
-  --bin asr-api --bin local-orchestrator --bin cohere-debug
+  --bin asr-api --bin local-orchestrator
+
+cargo check --no-default-features \
+  --features parakeet-backend,audio-decoder \
+  --bin asr-api --bin local-orchestrator
+
+(cd apple && swift build -c debug)
 
 cargo test --no-default-features --features cohere-backend,audio-decoder --lib
 ```

@@ -12,10 +12,9 @@ portion?
   Face weights. It contained `encoder.onnx`, decoder ONNX graphs, and external
   `.onnx.data` files. For MLX testing, `model.safetensors` was synced from
   Hugging Face and `vocab.json` was generated from `tokenizer.model`.
-- `second-state/cohere_transcribe_rs` has the shape we want: keep ONNX separate,
-  but offer a `--features mlx` path that loads `model.safetensors`, implements
-  the Cohere Conformer encoder and transformer decoder in Rust, and runs them
-  through MLX C / Metal on Apple Silicon.
+- The owned Swift/MLX runtime has the shape we want: keep ONNX separate, load
+  `model.safetensors` for the Apple path, and run the Cohere encoder/decoder
+  graph through MLX / Metal on Apple Silicon.
 - Homebrew ONNX Runtime at `/opt/homebrew/lib/libonnxruntime.dylib` is linked
   against `CoreML.framework` and includes the CoreML execution provider.
 - `cohere-debug` successfully transcribed `../whisper.cpp/samples/jfk.wav`
@@ -26,7 +25,7 @@ portion?
 - The output was correct:
   `And so, my fellow Americans, ask not what your country can do for you, ask what you can do for your country.`
 - The local Python environment does not currently have `mlx`, `coremltools`,
-  `onnxruntime`, `transformers`, or `torch` installed.
+  `onnxruntime`, or `transformers` installed.
 - The existing CoreML cache is small and partitioned, so ONNX Runtime is likely
   offloading supported subgraphs rather than converting the entire Cohere model
   to one native Core ML artifact.
@@ -103,10 +102,10 @@ separate optional feature for Apple Silicon.
 
 This gives us the right split:
 
-- ONNX remains better than libtorch for the existing deployment path.
+- ONNX/TensorRT remains the existing production deployment path.
 - MLX is opt-in via `cohere-mlx` and selected with `ASR_COHERE_BACKEND=mlx`.
-- The Mac path uses the upstream Rust/MLX implementation instead of trying to
-  make ONNX Runtime CoreML accelerate an export that is still encoder-bound.
+- The Mac path uses the owned Swift/MLX runtime instead of trying to make ONNX
+  Runtime CoreML accelerate an export that is still encoder-bound.
 
 The operational catch is model packaging: MLX requires the Hugging Face
 `model.safetensors` bundle plus `vocab.json`, while ONNX needs the existing

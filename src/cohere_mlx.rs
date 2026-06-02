@@ -1,12 +1,16 @@
 use crate::asr::WindowTranscription;
-use crate::config::DEFAULT_LANGUAGE;
+use crate::chunking::TimedWord;
+use crate::cohere_frontend::{CohereFrontend, CoherePreprocessorConfig};
+use crate::config::ASR_SAMPLE_RATE;
+use crate::timestamps::{duration_ms_for_samples, estimate_word_timestamps_from_token_count};
 use anyhow::{Context, Result};
-use cohere_transcribe_rs::audio::{compute_mel_features, mel_to_tensor_data, MelConfig};
-use cohere_transcribe_rs::config::ModelConfig;
-use cohere_transcribe_rs::mlx;
-use cohere_transcribe_rs::tokenizer::Tokenizer;
 use crossbeam_channel::{bounded, Sender};
-use std::path::Path;
+use ndarray::Array2;
+use serde::Deserialize;
+use std::fs;
+use std::io::Write;
+use std::path::{Path, PathBuf};
+use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -28,13 +32,14 @@ pub struct CohereMlxBackend {
 impl CohereMlxBackend {
     pub fn new(model_dir: &Path, max_new_tokens: usize) -> Result<Self> {
         validate_model_dir(model_dir)?;
+        let runtime = resolve_runtime_binary()?;
 
         let model_dir = model_dir.to_path_buf();
         let (sender, receiver) = bounded::<MlxJob>(2);
         let (ready_tx, ready_rx) = std::sync::mpsc::channel();
 
         thread::spawn(move || {
-            let mut worker = match CohereMlxWorker::new(&model_dir, max_new_tokens) {
+            let worker = match CohereMlxWorker::new(runtime, model_dir, max_new_tokens) {
                 Ok(worker) => {
                     let _ = ready_tx.send(Ok(()));
                     worker
@@ -45,16 +50,16 @@ impl CohereMlxBackend {
                 }
             };
 
-            for (_id, seq, samples, sender) in receiver {
+            for (id, seq, samples, sender) in receiver {
                 let result = worker
-                    .transcribe(samples, seq)
+                    .transcribe(id, seq, samples)
                     .map_err(|error| error.to_string());
                 let _ = sender.send(result);
             }
         });
 
         let ready = ready_rx
-            .recv_timeout(Duration::from_secs(240))
+            .recv_timeout(Duration::from_secs(10))
             .context("timed out waiting for Cohere MLX worker initialization")?;
         if let Err(error) = ready {
             anyhow::bail!(error);
@@ -84,65 +89,88 @@ impl CohereMlxBackend {
 }
 
 struct CohereMlxWorker {
-    encoder: mlx::encoder::ConformerEncoder,
-    decoder: mlx::decoder::TransformerDecoder,
-    tokenizer: Tokenizer,
-    mel_config: MelConfig,
+    runtime: PathBuf,
+    model_dir: PathBuf,
+    frontend: CohereFrontend,
     max_new_tokens: usize,
 }
 
 impl CohereMlxWorker {
-    fn new(model_dir: &Path, max_new_tokens: usize) -> Result<Self> {
-        let started = Instant::now();
-        mlx::stream::init_mlx(true);
-
-        let config = ModelConfig::load(model_dir).context("failed to load Cohere MLX config")?;
-        let tokenizer =
-            Tokenizer::load(model_dir).context("failed to load Cohere MLX tokenizer")?;
-        let mel_config = MelConfig::from_model_config(&config);
-        let weights = mlx::weights::MlxWeights::load(model_dir.join("model.safetensors"))
-            .context("failed to load Cohere MLX safetensors")?;
-        let encoder = mlx::encoder::ConformerEncoder::load(&weights, &config)
-            .context("failed to load Cohere MLX encoder")?;
-        let decoder = mlx::decoder::TransformerDecoder::load(&weights, &config)
-            .context("failed to load Cohere MLX decoder")?;
-        mlx::stream::synchronize();
-
-        info!(
-            elapsed_ms = started.elapsed().as_secs_f64() * 1000.0,
-            "initialized Cohere MLX backend"
+    fn new(runtime: PathBuf, model_dir: PathBuf, max_new_tokens: usize) -> Result<Self> {
+        anyhow::ensure!(
+            runtime.is_file(),
+            "Cohere MLX runtime binary not found at {}; run `swift build -c release` in asr-api/apple or set ASR_MLX_TRANSCRIBE_BIN",
+            runtime.display()
         );
-
+        let preprocessor =
+            load_json::<CoherePreprocessorConfig>(&model_dir.join("preprocessor_config.json"))
+                .context("failed to load Cohere preprocessor_config.json")?;
+        let frontend = CohereFrontend::new(preprocessor)?;
+        info!(runtime = %runtime.display(), "initialized Cohere Swift MLX backend wrapper");
         Ok(Self {
-            encoder,
-            decoder,
-            tokenizer,
-            mel_config,
+            runtime,
+            model_dir,
+            frontend,
             max_new_tokens,
         })
     }
 
-    fn transcribe(&mut self, samples: Vec<f32>, seq: u32) -> Result<WindowTranscription> {
+    fn transcribe(&self, id: u64, seq: u32, samples: Vec<f32>) -> Result<WindowTranscription> {
         let started = Instant::now();
-        let dithered = add_dither(&samples, self.mel_config.dither as f32, u64::from(seq));
-        let mel = compute_mel_features(&dithered, &self.mel_config);
-        let (flat, shape) = mel_to_tensor_data(&mel);
-        let shape = shape
+        let features = self.frontend.compute(&samples)?;
+        let feature_shape = features.dim();
+        let feature_path = write_temp_features(id, seq, &features)?;
+        let output = Command::new(&self.runtime)
+            .arg("--model-dir")
+            .arg(&self.model_dir)
+            .arg("--features-f32le")
+            .arg(&feature_path)
+            .arg("--feature-count")
+            .arg(feature_shape.0.to_string())
+            .arg("--feature-steps")
+            .arg(feature_shape.1.to_string())
+            .arg("--max-new-tokens")
+            .arg(self.max_new_tokens.to_string())
+            .output()
+            .with_context(|| format!("failed to run {}", self.runtime.display()));
+        let _ = fs::remove_file(&feature_path);
+        let output = output?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            anyhow::bail!(
+                "Cohere Swift MLX runtime failed with status {}: {}",
+                output.status,
+                stderr.trim()
+            );
+        }
+        if env_var_truthy("ASR_COHERE_MLX_DEBUG_STDERR") && !output.stderr.is_empty() {
+            eprint!("{}", String::from_utf8_lossy(&output.stderr));
+        }
+
+        let response: SwiftTranscription = serde_json::from_slice(&output.stdout)
+            .context("failed to parse Cohere Swift MLX runtime JSON output")?;
+        let mut words = response
+            .words
+            .unwrap_or_default()
             .into_iter()
-            .map(|dim| i32::try_from(dim).context("Cohere MLX mel shape overflow"))
-            .collect::<Result<Vec<_>>>()?;
-        let mel = mlx::array::Array::from_data_f32(&flat, &shape);
-        let text = mlx::inference::transcribe(
-            &mel,
-            &self.encoder,
-            &self.decoder,
-            &self.tokenizer,
-            DEFAULT_LANGUAGE,
-            true,
-            self.max_new_tokens,
-        )
-        .context("Cohere MLX inference failed")?;
-        mlx::stream::synchronize();
+            .map(|word| TimedWord {
+                word: word.word,
+                start_ms: word.start_ms,
+                end_ms: word.end_ms,
+            })
+            .collect::<Vec<_>>();
+        if words.is_empty() {
+            words = estimate_word_timestamps_from_token_count(
+                &response.text,
+                response
+                    .token_ids
+                    .as_ref()
+                    .map(|tokens| tokens.len())
+                    .unwrap_or_default(),
+                duration_ms_for_samples(samples.len(), ASR_SAMPLE_RATE),
+            );
+        }
 
         if env_var_truthy("ASR_COHERE_TIMINGS") {
             let audio_seconds = samples.len() as f64 / 16_000.0;
@@ -156,14 +184,33 @@ impl CohereMlxWorker {
         }
 
         Ok(WindowTranscription {
-            text,
-            words: Vec::new(),
+            text: response.text,
+            words,
         })
     }
 }
 
+#[derive(Debug, Deserialize)]
+struct SwiftTranscription {
+    text: String,
+    words: Option<Vec<SwiftTimedWord>>,
+    token_ids: Option<Vec<u32>>,
+}
+
+#[derive(Debug, Deserialize)]
+struct SwiftTimedWord {
+    word: String,
+    start_ms: u32,
+    end_ms: u32,
+}
+
 fn validate_model_dir(model_dir: &Path) -> Result<()> {
-    for file in ["config.json", "model.safetensors", "vocab.json"] {
+    for file in [
+        "config.json",
+        "model.safetensors",
+        "preprocessor_config.json",
+        "vocab.json",
+    ] {
         anyhow::ensure!(
             model_dir.join(file).is_file(),
             "Cohere MLX backend requires {}; sync the Hugging Face safetensors bundle and generate vocab.json",
@@ -173,28 +220,37 @@ fn validate_model_dir(model_dir: &Path) -> Result<()> {
     Ok(())
 }
 
-fn add_dither(samples: &[f32], dither: f32, seed: u64) -> Vec<f32> {
-    if dither == 0.0 {
-        return samples.to_vec();
+fn resolve_runtime_binary() -> Result<PathBuf> {
+    if let Some(path) = std::env::var_os("ASR_MLX_TRANSCRIBE_BIN") {
+        return Ok(PathBuf::from(path));
     }
+    Ok(Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("apple")
+        .join(".build")
+        .join("release")
+        .join("asr-mlx-transcribe"))
+}
 
-    let mut rng = seed
-        .wrapping_mul(6_364_136_223_846_793_005)
-        .wrapping_add(1_442_695_040_888_963_407);
-    let mut out = samples.to_vec();
-    for sample in out.iter_mut() {
-        rng = rng
-            .wrapping_mul(6_364_136_223_846_793_005)
-            .wrapping_add(1_442_695_040_888_963_407);
-        let u = (rng >> 33) as f32 / (u32::MAX as f32);
-        rng = rng
-            .wrapping_mul(6_364_136_223_846_793_005)
-            .wrapping_add(1_442_695_040_888_963_407);
-        let v = (rng >> 33) as f32 / (u32::MAX as f32);
-        let noise = (-2.0 * u.max(1e-38).ln()).sqrt() * (2.0 * std::f32::consts::PI * v).cos();
-        *sample += dither * noise;
+fn write_temp_features(id: u64, seq: u32, features: &Array2<f32>) -> Result<PathBuf> {
+    let path = std::env::temp_dir().join(format!(
+        "asr-api-cohere-mlx-features-{}-{id}-{seq}.f32le",
+        std::process::id()
+    ));
+    let mut file =
+        fs::File::create(&path).with_context(|| format!("failed to create {}", path.display()))?;
+    let slice = features
+        .as_slice_memory_order()
+        .context("Cohere MLX feature tensor is not contiguous")?;
+    for value in slice {
+        file.write_all(&value.to_le_bytes())
+            .with_context(|| format!("failed to write {}", path.display()))?;
     }
-    out
+    Ok(path)
+}
+
+fn load_json<T: for<'de> Deserialize<'de>>(path: &Path) -> Result<T> {
+    let bytes = fs::read(path).with_context(|| format!("failed to read {}", path.display()))?;
+    serde_json::from_slice(&bytes).with_context(|| format!("failed to parse {}", path.display()))
 }
 
 fn env_var_truthy(name: &str) -> bool {

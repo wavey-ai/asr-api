@@ -9,15 +9,17 @@ Usage:
   sync-model-from-bucket.sh --model <model-id> --dest <dir> [--force]
 
 Environment:
-  AWS_ACCESS_KEY_ID        Required S3 access key
-  AWS_SECRET_ACCESS_KEY    Required S3 secret key
+  AWS_ACCESS_KEY_ID        Required S3 access key unless ASR_MODEL_BUCKET_NO_SIGN=true
+  AWS_SECRET_ACCESS_KEY    Required S3 secret key unless ASR_MODEL_BUCKET_NO_SIGN=true
   AWS_SESSION_TOKEN        Optional session token
   ASR_MODEL_BUCKET_NAME    Defaults to wavey.ai
   ASR_MODEL_BUCKET_REGION  Defaults to us-iad
   ASR_MODEL_BUCKET_ENDPOINT Defaults to https://us-iad-1.linodeobjects.com
+  ASR_MODEL_BUCKET_NO_SIGN Set true for public bucket reads
 
 Supported models:
   cohere-transcribe-03-2026
+  parakeet-tdt-0.6b-v3
 
 Behavior:
   The script writes a state file into the destination directory and skips the
@@ -68,14 +70,20 @@ if [[ -z "$MODEL_ID" || -z "$DEST_DIR" ]]; then
   exit 1
 fi
 
-: "${AWS_ACCESS_KEY_ID:?set AWS_ACCESS_KEY_ID}"
-: "${AWS_SECRET_ACCESS_KEY:?set AWS_SECRET_ACCESS_KEY}"
-
 require_cmd aws
 
 BUCKET_NAME="${ASR_MODEL_BUCKET_NAME:-wavey.ai}"
 BUCKET_REGION="${ASR_MODEL_BUCKET_REGION:-us-iad}"
 BUCKET_ENDPOINT="${ASR_MODEL_BUCKET_ENDPOINT:-https://us-iad-1.linodeobjects.com}"
+BUCKET_NO_SIGN="${ASR_MODEL_BUCKET_NO_SIGN:-false}"
+declare -a AWS_AUTH_ARGS=()
+
+if [[ "$BUCKET_NO_SIGN" == "true" || "$BUCKET_NO_SIGN" == "1" ]]; then
+  AWS_AUTH_ARGS=(--no-sign-request)
+else
+  : "${AWS_ACCESS_KEY_ID:?set AWS_ACCESS_KEY_ID}"
+  : "${AWS_SECRET_ACCESS_KEY:?set AWS_SECRET_ACCESS_KEY}"
+fi
 
 declare -a FILES=()
 SOURCE_PREFIX=""
@@ -105,6 +113,25 @@ case "$MODEL_ID" in
       tokenizer.json
       tokenizer.model
       tokenizer_config.json
+    )
+    ;;
+  parakeet-tdt-0.6b-v3)
+    SOURCE_PREFIX="models/parakeet-tdt-0.6b-v3"
+    FILES=(
+      SHA256SUMS
+      decoder.onnx
+      decoder.onnx.data
+      encoder.onnx
+      encoder.onnx.data
+      export.json
+      joint.enc.onnx
+      joint.enc.onnx.data
+      joint.joint_net.onnx
+      joint.joint_net.onnx.data
+      joint.pred.onnx
+      joint.pred.onnx.data
+      tokens.txt
+      vocab.txt
     )
     ;;
   *)
@@ -149,6 +176,7 @@ write_remote_state() {
         --region "$BUCKET_REGION" \
         --endpoint-url "$BUCKET_ENDPOINT" \
         s3api head-object \
+        "${AWS_AUTH_ARGS[@]}" \
         --bucket "$BUCKET_NAME" \
         --key "${SOURCE_PREFIX}/${name}" \
         --query '[ETag, ContentLength, LastModified]' \
@@ -203,6 +231,7 @@ for name in "${FILES[@]}"; do
     --region "$BUCKET_REGION" \
     --endpoint-url "$BUCKET_ENDPOINT" \
     s3 cp \
+    "${AWS_AUTH_ARGS[@]}" \
     "s3://${BUCKET_NAME}/${SOURCE_PREFIX}/${name}" \
     "${STAGED_DIR}/${name}" \
     --no-progress
