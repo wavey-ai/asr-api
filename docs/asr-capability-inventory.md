@@ -258,6 +258,45 @@ CohereX reproduces its own regression alignment with zero deltas by definition
 for this comparison. The Parakeet sidecar therefore trades some disagreement
 with CohereX's wav2vec2 boundaries for substantially higher speed.
 
+### TIMIT Reference-Boundary Accuracy
+
+Reference-boundary run on 2026-06-02:
+
+- Dataset: `kylelovesllms/timit_asr`, first `100` utterances from the `test`
+  split.
+- Reference: dataset `word_detail` start/stop sample indices converted at
+  `16 kHz`.
+- Transcript input: lowercase word sequence from `word_detail`, not ASR output.
+- Corpus size: `315.695 s` audio, `856` reference words.
+- Scoring: word-normalized LCS matching followed by absolute start/end/midpoint
+  boundary deltas. Both aligners matched `856/856` reference words.
+- Timing shape: one warmup plus three measured repeats per utterance. Parakeet
+  was run through the isolated `ctc-align-debug` binary per utterance; reported
+  speed uses measured `align()` time and excludes process/session init.
+
+Accuracy and speed:
+
+| Aligner | Total Align | Realtime | Mean Start MAE | Mean End MAE | Mean Mid MAE | p50 Mid | p95 Mid | p99 Mid |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Parakeet CTC CUDA, full-float ONNX | `1402.13 ms` | `225.15x` | `78.13 ms` | `92.78 ms` | `75.93 ms` | `71 ms` | `153 ms` | `215 ms` |
+| CohereX wav2vec2 CUDA | `3943.76 ms` | `80.05x` | `62.10 ms` | `34.20 ms` | `33.65 ms` | `31 ms` | `72 ms` | `103 ms` |
+
+Bottom line on clean TIMIT boundaries:
+
+- Parakeet CTC sidecar was `2.81x` faster by total measured alignment time.
+- CohereX wav2vec2 was more accurate: mean midpoint MAE was about `2.26x`
+  lower, and p95 midpoint MAE was about `2.13x` lower.
+- Parakeet's end boundaries were the main weakness (`92.78 ms` mean end MAE
+  versus CohereX `34.20 ms`), which suggests the next improvement target is
+  CTC word-span policy and/or frame-to-time calibration, not ASR text quality.
+
+Memory on this TIMIT-shaped run:
+
+| Aligner | Peak Host RSS | Peak GPU Memory |
+| --- | ---: | ---: |
+| Parakeet CTC CUDA, short TIMIT utterance | `1087.6 MiB` | `3256 MiB` |
+| CohereX wav2vec2 CUDA, full 100-utterance run | `1593.5 MiB` | `1082 MiB` |
+
 This benchmark is a performance-only sidecar measurement. It intentionally does
 not compare word-boundary accuracy against CohereX's alignment JSON.
 
