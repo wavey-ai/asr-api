@@ -19,6 +19,11 @@ name = "ctc-align-debug"
 path = "src/bin/ctc-align-debug/main.rs"
 required-features = ["cohere-backend", "audio-decoder"]
 
+[[bin]]
+name = "parakeet-ctc-eval"
+path = "src/bin/parakeet-ctc-eval/main.rs"
+required-features = ["cohere-backend", "audio-decoder"]
+
 [features]
 default = ["cohere-backend", "audio-decoder"]
 gpu-backend = []

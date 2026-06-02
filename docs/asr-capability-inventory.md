@@ -258,9 +258,73 @@ CohereX reproduces its own regression alignment with zero deltas by definition
 for this comparison. The Parakeet sidecar therefore trades some disagreement
 with CohereX's wav2vec2 boundaries for substantially higher speed.
 
-### TIMIT Reference-Boundary Accuracy
+### Parakeet CTC Direct TIMIT Run
 
-Reference-boundary run on 2026-06-02:
+Direct Parakeet CTC ONNX run on 2026-06-02:
+
+- Dataset: `kylelovesllms/timit_asr`, first `100` utterances from the `test`
+  split.
+- Reference: dataset `word_detail` start/stop sample indices converted at
+  `16 kHz`.
+- Corpus size: `315.695 s` audio, `856` reference words.
+- Model/runtime: `onnx-community/parakeet-ctc-0.6b-ONNX`, full-float
+  `onnx/model.onnx`, ONNX Runtime CUDA EP.
+- This run used Parakeet CTC as ASR. It did not feed reference transcripts into
+  the CTC sidecar and did not use Cohere timestamp estimation.
+- Scoring: Parakeet-emitted words were matched to TIMIT reference words with
+  word-normalized LCS, then matched word timestamps were scored against
+  `word_detail`.
+- Artifact: `/opt/asr-timit-word-eval/parakeet_ctc_greedy_eval_repeat3.json`.
+
+Direct CTC ASR timestamp accuracy:
+
+| Model | Ref Words | Hyp Words | Matched | WER | Mean Start MAE | Mean End MAE | Mean Mid MAE | p50 Mid | p95 Mid | p99 Mid |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Parakeet CTC CUDA, full-float ONNX | `856` | `860` | `830` | `3.50%` | `78.74 ms` | `68.23 ms` | `47.24 ms` | `40 ms` | `117 ms` | `158 ms` |
+
+Direct CTC ASR speed:
+
+| Timing Shape | Total Decode | Realtime | Per-Utterance Mean | Per-Utterance p50 | Per-Utterance p95 |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| One measured pass after five warmup utterances | `6219.25 ms` | `50.76x` | `62.19 ms` | `63.25 ms` | `64.89 ms` |
+| Three measured repeats per utterance | `3000.10 ms` | `105.23x` | `30.00 ms` | `14.19 ms` | `64.46 ms` |
+
+The one-pass timing is the conservative service-shaped number because each TIMIT
+utterance has a fresh input shape. The three-repeat timing shows the warmed
+shape-cache behavior. Direct Parakeet CTC is less accurate than CohereX
+wav2vec2 on matched word boundaries, but the gap is much smaller than the
+reference-transcript sidecar forced-alignment run: mean midpoint MAE was
+`47.24 ms` for direct CTC ASR versus `33.65 ms` for CohereX wav2vec2.
+
+Most accurate Parakeet CTC timestamping approach tested so far:
+
+- Decode Parakeet CTC directly and use its own word timestamps.
+- Use those words as anchors for the target transcript with word-normalized LCS.
+- Interpolate only target words that Parakeet CTC missed or split differently.
+- Apply simple global start/end latency offsets fitted on this TIMIT run.
+
+This anchored path keeps full target-transcript coverage (`856/856` words)
+without using the older forced-alignment dynamic-programming path:
+
+| Path | Coverage | Start Offset | End Offset | Mean Start MAE | Mean End MAE | Mean Mid MAE | p50 Mid | p95 Mid | p99 Mid |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Direct CTC, matched words only | `830/856` | none | none | `78.74 ms` | `68.23 ms` | `47.24 ms` | `40 ms` | `117 ms` | `158 ms` |
+| Direct CTC, matched words only, calibrated | `830/856` | `-72 ms` | `+22 ms` | `49.75 ms` | `65.61 ms` | `42.93 ms` | `36 ms` | `109 ms` | `143 ms` |
+| CTC anchors + interpolated target transcript | `856/856` | none | none | `79.25 ms` | `69.96 ms` | `48.18 ms` | `40 ms` | `119 ms` | `159 ms` |
+| CTC anchors + interpolated target transcript, calibrated | `856/856` | `-69 ms` | `+18 ms` | `51.96 ms` | `68.02 ms` | `43.75 ms` | `36 ms` | `109 ms` | `156 ms` |
+
+Artifact:
+`/opt/asr-timit-word-eval/parakeet_ctc_anchor_calibrated_eval_repeat3.json`.
+
+Conclusion: the best Parakeet CTC-only path tested is the calibrated direct CTC
+anchor path. It is much better than the old reference-transcript forced aligner
+(`43.75 ms` versus `75.93 ms` midpoint MAE with full word coverage), but it is
+still less accurate than CohereX wav2vec2 on clean TIMIT (`33.65 ms` midpoint
+MAE).
+
+### TIMIT Forced-Alignment Reference-Boundary Accuracy
+
+Reference-transcript forced-alignment run on 2026-06-02:
 
 - Dataset: `kylelovesllms/timit_asr`, first `100` utterances from the `test`
   split.

@@ -332,6 +332,28 @@ swift build -c release
   --model-dir ../models/cohere-transcribe-03-2026
 ```
 
+Minimal Apple MLX Cohere ASR run:
+
+```bash
+cd apple && swift build -c release && cd ..
+
+MACOSX_DEPLOYMENT_TARGET=14.0 \
+cargo build --release --no-default-features \
+  --features cohere-mlx,audio-decoder \
+  --bin cohere-debug
+
+ASR_COHERE_BACKEND=mlx \
+ASR_COHERE_TIMINGS=true \
+  target/release/cohere-debug \
+  --model-provider cohere \
+  --model-dir models/cohere-transcribe-03-2026 \
+  --audio-path ../whisper.cpp/samples/jfk.wav \
+  --device-ids '' \
+  --max-new-tokens 64 \
+  --warmup 1 \
+  --repeat 3
+```
+
 Local three-role stack:
 
 ```bash

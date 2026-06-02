@@ -106,6 +106,19 @@ pub struct ParakeetCtcAligner {
     output_name: String,
 }
 
+#[derive(Debug, Clone)]
+pub struct ParakeetCtcTranscription {
+    pub text: String,
+    pub words: Vec<TimedWord>,
+}
+
+#[derive(Debug, Clone)]
+struct CtcTokenFrame {
+    id: usize,
+    start: usize,
+    end: usize,
+}
+
 impl ParakeetCtcAligner {
     pub(crate) fn from_env(device_ids: &[usize]) -> Result<Option<Self>> {
         if !ctc_alignment_requested()? {
@@ -250,6 +263,46 @@ impl ParakeetCtcAligner {
             self.config.subsampling_factor,
             self.config.timestamp_offset_ms,
         ))
+    }
+
+    pub fn transcribe(&self, samples: &[f32]) -> Result<ParakeetCtcTranscription> {
+        let duration_ms = duration_ms_for_samples(samples.len(), self.config.sample_rate);
+        if duration_ms == 0 {
+            return Ok(ParakeetCtcTranscription {
+                text: String::new(),
+                words: Vec::new(),
+            });
+        }
+
+        let features = self.compute_features(samples)?;
+        let logits = self.run_ctc(&features)?;
+        let (logit_values, frame_count, vocab_size) =
+            logits_to_time_major(&logits, self.config.vocab_size)?;
+        anyhow::ensure!(
+            vocab_size > self.config.blank_id,
+            "Parakeet CTC blank id {} is outside logits vocab size {}",
+            self.config.blank_id,
+            vocab_size
+        );
+
+        let token_frames =
+            greedy_ctc_token_frames(&logit_values, frame_count, vocab_size, self.config.blank_id)?;
+        let words = greedy_words_from_token_frames(
+            &self.tokenizer,
+            &token_frames,
+            duration_ms,
+            self.config.hop_length,
+            self.config.sample_rate,
+            self.config.subsampling_factor,
+            self.config.timestamp_offset_ms,
+        );
+        let text = words
+            .iter()
+            .map(|word| word.word.as_str())
+            .collect::<Vec<_>>()
+            .join(" ");
+
+        Ok(ParakeetCtcTranscription { text, words })
     }
 
     fn prepare_target(&self, text: &str) -> Result<AlignmentTarget> {
@@ -745,6 +798,46 @@ fn forced_align_tokens(
     Ok(token_frames)
 }
 
+fn greedy_ctc_token_frames(
+    logits: &[f32],
+    frame_count: usize,
+    vocab_size: usize,
+    blank_id: usize,
+) -> Result<Vec<CtcTokenFrame>> {
+    anyhow::ensure!(frame_count > 0, "cannot decode with zero CTC frames");
+    anyhow::ensure!(
+        logits.len() == frame_count * vocab_size,
+        "CTC logits length {} did not match frames*vocab {}",
+        logits.len(),
+        frame_count * vocab_size
+    );
+
+    let mut token_frames: Vec<CtcTokenFrame> = Vec::new();
+    let mut active_token: Option<usize> = None;
+    for frame in 0..frame_count {
+        let token = argmax_token(logits, vocab_size, frame);
+        if token == blank_id {
+            active_token = None;
+            continue;
+        }
+
+        if active_token == Some(token) {
+            if let Some(last) = token_frames.last_mut() {
+                last.end = frame;
+            }
+        } else {
+            token_frames.push(CtcTokenFrame {
+                id: token,
+                start: frame,
+                end: frame,
+            });
+            active_token = Some(token);
+        }
+    }
+
+    Ok(token_frames)
+}
+
 fn words_from_token_frames(
     target: &AlignmentTarget,
     token_frames: &[Option<(usize, usize)>],
@@ -803,6 +896,125 @@ fn words_from_token_frames(
     words
 }
 
+fn greedy_words_from_token_frames(
+    tokenizer: &Tokenizer,
+    token_frames: &[CtcTokenFrame],
+    duration_ms: u32,
+    hop_length: usize,
+    sample_rate: usize,
+    subsampling_factor: usize,
+    offset_ms: i32,
+) -> Vec<TimedWord> {
+    let mut words = Vec::new();
+    let mut current = String::new();
+    let mut current_start = 0usize;
+    let mut current_end = 0usize;
+
+    for token_frame in token_frames {
+        let Some(token) = tokenizer.id_to_token(token_frame.id as u32) else {
+            continue;
+        };
+        let Some((piece, starts_word)) = ctc_token_piece(&token) else {
+            continue;
+        };
+        if piece.is_empty() {
+            continue;
+        }
+
+        if starts_word && !current.is_empty() {
+            push_greedy_word(
+                &mut words,
+                std::mem::take(&mut current),
+                current_start,
+                current_end,
+                duration_ms,
+                hop_length,
+                sample_rate,
+                subsampling_factor,
+                offset_ms,
+            );
+        }
+
+        if current.is_empty() {
+            current_start = token_frame.start;
+        }
+        current.push_str(&piece);
+        current_end = token_frame.end;
+    }
+
+    if !current.is_empty() {
+        push_greedy_word(
+            &mut words,
+            current,
+            current_start,
+            current_end,
+            duration_ms,
+            hop_length,
+            sample_rate,
+            subsampling_factor,
+            offset_ms,
+        );
+    }
+
+    words
+}
+
+fn push_greedy_word(
+    words: &mut Vec<TimedWord>,
+    word: String,
+    start_frame: usize,
+    end_frame: usize,
+    duration_ms: u32,
+    hop_length: usize,
+    sample_rate: usize,
+    subsampling_factor: usize,
+    offset_ms: i32,
+) {
+    let normalized = normalize_ctc_word(&word);
+    if normalized.is_empty() {
+        return;
+    }
+
+    let mut start_ms = frame_to_ms(
+        start_frame,
+        hop_length,
+        sample_rate,
+        subsampling_factor,
+        offset_ms,
+        duration_ms,
+    );
+    let mut end_ms = frame_to_ms(
+        end_frame.saturating_add(1),
+        hop_length,
+        sample_rate,
+        subsampling_factor,
+        offset_ms,
+        duration_ms,
+    );
+    if let Some(previous) = words.last() {
+        start_ms = start_ms.max(previous.end_ms);
+    }
+    if end_ms <= start_ms {
+        end_ms = start_ms.saturating_add(1).min(duration_ms.max(start_ms));
+    }
+    words.push(TimedWord {
+        word: normalized,
+        start_ms,
+        end_ms,
+    });
+}
+
+fn ctc_token_piece(token: &str) -> Option<(String, bool)> {
+    if token == "<unk>" {
+        return None;
+    }
+
+    const METASPACE: char = '\u{2581}';
+    let starts_word = token.starts_with(METASPACE);
+    let piece = token.trim_start_matches(METASPACE).to_string();
+    Some((piece, starts_word))
+}
+
 fn word_token_frame_range(
     word: &AlignmentWord,
     target_token_count: usize,
@@ -851,6 +1063,20 @@ fn logit_score(logits: &[f32], vocab_size: usize, frame: usize, token: usize) ->
         .get(frame * vocab_size + token)
         .copied()
         .unwrap_or(f32::NEG_INFINITY)
+}
+
+fn argmax_token(logits: &[f32], vocab_size: usize, frame: usize) -> usize {
+    let offset = frame * vocab_size;
+    let mut best_token = 0usize;
+    let mut best_score = f32::NEG_INFINITY;
+    for token in 0..vocab_size {
+        let score = logits[offset + token];
+        if score > best_score {
+            best_token = token;
+            best_score = score;
+        }
+    }
+    best_token
 }
 
 fn print_logit_stats(
@@ -1068,5 +1294,23 @@ mod tests {
     fn ctc_word_normalization_keeps_speech_text() {
         assert_eq!(normalize_ctc_word("Americans,"), "americans");
         assert_eq!(normalize_ctc_word("don't"), "don't");
+    }
+
+    #[test]
+    fn greedy_ctc_collapses_repeats_and_blanks() {
+        let vocab_size = 4;
+        let blank = 3;
+        let frame_count = 7;
+        let mut logits = vec![-10.0; frame_count * vocab_size];
+        for (frame, token) in [blank, 0, 0, blank, 0, 1, blank].into_iter().enumerate() {
+            logits[frame * vocab_size + token] = 10.0;
+        }
+
+        let frames = greedy_ctc_token_frames(&logits, frame_count, vocab_size, blank).unwrap();
+
+        assert_eq!(frames.len(), 3);
+        assert_eq!((frames[0].id, frames[0].start, frames[0].end), (0, 1, 2));
+        assert_eq!((frames[1].id, frames[1].start, frames[1].end), (0, 4, 4));
+        assert_eq!((frames[2].id, frames[2].start, frames[2].end), (1, 5, 5));
     }
 }
