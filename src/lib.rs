@@ -9,7 +9,7 @@ pub(crate) mod cohere_frontend;
 pub mod cohere_mlx;
 pub mod config;
 #[cfg(feature = "cohere-backend")]
-pub(crate) mod ctc_align;
+pub mod ctc_align;
 #[cfg(feature = "audio-decoder")]
 pub mod decoder;
 pub mod deepgram;

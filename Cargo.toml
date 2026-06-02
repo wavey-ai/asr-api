@@ -14,6 +14,11 @@ name = "timestamp-validate"
 path = "src/bin/timestamp-validate/main.rs"
 required-features = ["cohere-backend", "parakeet-backend", "audio-decoder"]
 
+[[bin]]
+name = "ctc-align-debug"
+path = "src/bin/ctc-align-debug/main.rs"
+required-features = ["cohere-backend", "audio-decoder"]
+
 [features]
 default = ["cohere-backend", "audio-decoder"]
 gpu-backend = []

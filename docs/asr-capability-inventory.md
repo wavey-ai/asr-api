@@ -159,6 +159,43 @@ not an OSX/macOS path: NVIDIA's TensorRT support matrix lists Linux, Windows,
 SBSA, and JetPack targets, but no macOS target:
 https://docs.nvidia.com/deeplearning/tensorrt/latest/getting-started/support-matrix.html
 
+### Parakeet CTC Sidecar Benchmark
+
+Linode benchmark on 2026-06-02:
+
+- Instance: `g2-gpu-rtx4000a1-m` / RTX 4000 Ada / 32 GiB system RAM.
+- Driver: `610.43.02`.
+- Runtime for ORT: CUDA 12.8 user-space libraries in
+  `/opt/cuda-12.8-runtime`; ONNX Runtime TensorRT/CUDA provider linkage had no
+  missing `ldd` dependencies after installing CUDA 12.8 cuBLAS/cuFFT/cuDNN.
+- Model: `onnx-community/parakeet-ctc-0.6b-ONNX`, `onnx/model_int8.onnx`.
+- Corpus: CohereX fixture transcripts and audio files; transcript text was
+  used only as sidecar alignment input, with no Cohere ONNX decode in-process.
+- Binary: `ctc-align-debug`.
+
+TensorRT result on the Medium Ada host:
+
+- Isolated Parakeet CTC TensorRT engine build OOM-killed before writing an
+  engine cache.
+- The 35s profile attempt used `1 GiB` workspace and reached about `31.6 GiB`
+  RSS before the kernel killed `ctc-align-debug`.
+- A constrained 33s max profile with `256 MiB` workspace and builder
+  optimization level `0` also OOM-killed at the same system-memory ceiling.
+- Earlier attempts that loaded Cohere ONNX in the same process also OOM-killed,
+  but the isolated sidecar run confirms the TensorRT build itself is too large
+  for this instance/RAM profile.
+
+CUDA EP sidecar-only runtime, using one warmup and three measured repeats:
+
+| File | Audio | Words | Mean Align | Realtime |
+| --- | ---: | ---: | ---: | ---: |
+| `amelia_earhart_noisy.c431d09f.wav` | `31.800 s` | `74` | `1402.52 ms` | `22.67x` |
+| `david-gooding-noisy.mp3` | `30.154 s` | `86` | `1327.53 ms` | `22.71x` |
+| `hur.mp3` | `165.295 s` | `411` | `6522.90 ms` | `25.34x` |
+
+This benchmark is a performance-only sidecar measurement. It intentionally does
+not compare word-boundary accuracy against CohereX's alignment JSON.
+
 ### CohereX Comparison
 
 [CohereX](https://github.com/Diffio-AI/CohereX) is also a side-channel

@@ -96,7 +96,7 @@ struct AlignmentWord {
     token_end: usize,
 }
 
-pub(crate) struct ParakeetCtcAligner {
+pub struct ParakeetCtcAligner {
     frontend: BatchLogMelSpectrogram,
     scratch: Mutex<BatchLogMelScratch>,
     session: Mutex<Session>,
@@ -115,7 +115,7 @@ impl ParakeetCtcAligner {
         Self::new(device_ids).map(Some)
     }
 
-    fn new(device_ids: &[usize]) -> Result<Self> {
+    pub fn new(device_ids: &[usize]) -> Result<Self> {
         ensure_ort_initialized()?;
         let config = ParakeetCtcRuntimeConfig::from_env()?;
         fs::create_dir_all(&config.cache_dir).with_context(|| {
@@ -189,7 +189,7 @@ impl ParakeetCtcAligner {
         })
     }
 
-    pub(crate) fn align(&self, samples: &[f32], text: &str) -> Result<Vec<TimedWord>> {
+    pub fn align(&self, samples: &[f32], text: &str) -> Result<Vec<TimedWord>> {
         let duration_ms = duration_ms_for_samples(samples.len(), self.config.sample_rate);
         if duration_ms == 0 || text.trim().is_empty() {
             return Ok(Vec::new());
