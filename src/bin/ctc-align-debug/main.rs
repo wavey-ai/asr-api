@@ -126,7 +126,8 @@ async fn main() -> Result<()> {
         }
     }
 
-    Ok(())
+    std::mem::forget(aligner);
+    std::process::exit(0);
 }
 
 fn load_text(args: &Args, key: &str) -> Result<String> {

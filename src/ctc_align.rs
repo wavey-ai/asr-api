@@ -22,7 +22,7 @@ use tracing::{info, warn};
 static ORT_INIT: OnceLock<Result<(), String>> = OnceLock::new();
 
 const DEFAULT_CTC_MODEL_DIR: &str = "models/parakeet-ctc-0.6b-onnx";
-const DEFAULT_CTC_ONNX_FILE: &str = "onnx/model_int8.onnx";
+const DEFAULT_CTC_ONNX_FILE: &str = "onnx/model.onnx";
 
 #[derive(Debug, Deserialize)]
 struct ParakeetCtcModelConfig {
@@ -410,7 +410,7 @@ impl ParakeetCtcRuntimeConfig {
                 .unwrap_or(8 * 1024 * 1024 * 1024),
             builder_optimization_level: env_var_u8("ASR_CTC_ALIGN_TRT_BUILDER_OPT_LEVEL")
                 .unwrap_or(5),
-            fp16: !env_var_falsey("ASR_CTC_ALIGN_TRT_FP16"),
+            fp16: env_var_truthy("ASR_CTC_ALIGN_TRT_FP16"),
             detailed_build_log: env_var_truthy("ASR_CTC_ALIGN_TRT_DETAILED_BUILD_LOG"),
             sample_rate,
             n_fft,

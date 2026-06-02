@@ -190,14 +190,15 @@ side-channel:
 
 - `ASR_COHERE_TIMESTAMP_BACKEND`: `token-frequency` or `parakeet-ctc`
 - `ASR_CTC_ALIGN_MODEL_DIR`: Parakeet CTC ONNX model directory
-- `ASR_CTC_ALIGN_ONNX_FILE`: default `onnx/model_int8.onnx`
+- `ASR_CTC_ALIGN_ONNX_FILE`: default `onnx/model.onnx`
 - `ASR_CTC_ALIGN_EXECUTION_PROVIDER`: `auto`, `tensorrt`, `cuda`, or `cpu`
 - `ASR_CTC_ALIGN_FORCE_CPU`: force CPU for local/macOS validation
 - `ASR_CTC_ALIGN_TRT_CACHE_DIR`: TensorRT engine/timing cache directory
 - `ASR_CTC_ALIGN_TRT_MIN_DURATION_S`, `ASR_CTC_ALIGN_TRT_OPT_DURATION_S`,
   `ASR_CTC_ALIGN_TRT_MAX_DURATION_S`: TensorRT dynamic-shape profile window
 - `ASR_CTC_ALIGN_TRT_WORKSPACE_BYTES`: default `8 GiB`
-- `ASR_CTC_ALIGN_TRT_FP16`: default enabled
+- `ASR_CTC_ALIGN_TRT_FP16`: default disabled; enable only after validating
+  finite logits for the specific CTC ONNX graph/runtime
 - `ASR_CTC_ALIGN_TIMINGS`: emit CTC aligner timing/debug lines to stderr
 
 The local macOS validation path uses ONNX Runtime CPU. TensorRT is not a macOS
@@ -206,10 +207,12 @@ NVIDIA TensorRT support matrix lists Linux, Windows, SBSA, and JetPack targets,
 and no macOS target:
 https://docs.nvidia.com/deeplearning/tensorrt/latest/getting-started/support-matrix.html
 
-The validated local CTC aligner model is `onnx/model_int8.onnx` from
-`onnx-community/parakeet-ctc-0.6b-ONNX`. `onnx/model_q4f16.onnx` loaded on the
-M1 Mac CPU path but returned all-NaN logits on JFK, so it is not suitable for
-local CPU validation.
+The local CPU validation path used `onnx/model_int8.onnx` from
+`onnx-community/parakeet-ctc-0.6b-ONNX`. That int8/QDQ graph is not the server
+performance target: use the default full-float `onnx/model.onnx` for CUDA or
+TensorRT. `onnx/model_q4f16.onnx` and `onnx/model_fp16.onnx` produced all-NaN
+logits in validation, and TensorRT FP16 builder mode also produced all-NaN
+logits for this graph/runtime.
 
 Validate Cohere timestamps against Parakeet/TDT:
 

@@ -28,7 +28,7 @@ The service-level model provider enum supports `auto`, `cohere`, and
 | Cohere ONNX + CoreML/Metal | Implemented in `asr-api` | Apple ONNX path selected by `ASR_COHERE_COREML=true` or `ASR_COHERE_EXECUTION_PROVIDER=coreml|metal|apple`. |
 | Cohere MLX | Implemented; JFK smoke matches ONNX tokens | Optional `cohere-mlx` feature, selected by `ASR_COHERE_BACKEND=mlx`; Rust invokes the owned Swift/MLX runtime in `apple/`. The service no longer depends on `cohere-transcribe-rs` or vendored `mlx-c`. See [ASR MLX Bring-Up Findings](asr-mlx-bringup-findings.md). |
 | Cohere word timestamps | Implemented; two modes | Default mode returns monotonic `TimedWord` vectors from transcript token frequency. Cohere ONNX can optionally use the Parakeet CTC ONNX forced aligner with `ASR_COHERE_TIMESTAMP_BACKEND=parakeet-ctc`. Cohere MLX still uses token-frequency timestamps. |
-| Cohere ONNX + Parakeet CTC timestamps | Implemented for local ONNX CPU validation and TensorRT/CUDA deployment | Uses `onnx-community/parakeet-ctc-0.6b-ONNX` as a side-channel aligner over the Cohere transcript. Validated local model is `onnx/model_int8.onnx`; `onnx/model_q4f16.onnx` produced all-NaN logits on M1 CPU. |
+| Cohere ONNX + Parakeet CTC timestamps | Implemented for local ONNX CPU validation and TensorRT/CUDA deployment | Uses `onnx-community/parakeet-ctc-0.6b-ONNX` as a side-channel aligner over the Cohere transcript. Server-side CUDA/TensorRT should use `onnx/model.onnx`; `onnx/model_int8.onnx` was valid but much slower under CUDA and OOMed TensorRT build, while `onnx/model_fp16.onnx` and TensorRT FP16 produced all-NaN logits. |
 | Parakeet/TDT ONNX | Wired into `asr-api` behind `parakeet-backend` | Select with `ASR_MODEL_PROVIDER=parakeet`; consumes split TDT exports: `encoder.onnx`, `decoder.onnx`, `joint.enc.onnx`, `joint.pred.onnx`, `joint.joint_net.onnx`, and `tokens.txt`. |
 | Parakeet/TDT ONNX + TensorRT | Wired via `asr-onnx` behind `parakeet-backend` | TensorRT configuration is inherited from `asr-onnx` through `ASR_ONNX_TRT_*` envs and component selection. |
 | Parakeet pure Rust featurization | Implemented in `asr-api` using `mel-spec` mel frontend | The `parakeet-backend` frontend computes NeMo-style log mel features in Rust with sparse filterbank projection, reusable FFT scratch, and per-feature normalization. This is the only Parakeet featurization path used by `asr-api`. |
@@ -151,8 +151,9 @@ Result:
 - p95 absolute midpoint delta: `175 ms`.
 
 The first q4f16 ONNX validation attempt loaded and accepted inputs on M1 CPU,
-but returned `141450` NaN logits for JFK (`138 x 1025`), so the default CTC
-aligner file is now `onnx/model_int8.onnx`.
+but returned `141450` NaN logits for JFK (`138 x 1025`). `onnx/model_int8.onnx`
+was usable for CPU validation, but is not the performance target for CUDA or
+TensorRT. The server-side default is now the full-float `onnx/model.onnx`.
 
 TensorRT is still the production target for this aligner on NVIDIA hosts. It is
 not an OSX/macOS path: NVIDIA's TensorRT support matrix lists Linux, Windows,
@@ -168,30 +169,94 @@ Linode benchmark on 2026-06-02:
 - Runtime for ORT: CUDA 12.8 user-space libraries in
   `/opt/cuda-12.8-runtime`; ONNX Runtime TensorRT/CUDA provider linkage had no
   missing `ldd` dependencies after installing CUDA 12.8 cuBLAS/cuFFT/cuDNN.
-- Model: `onnx-community/parakeet-ctc-0.6b-ONNX`, `onnx/model_int8.onnx`.
+- Model: `onnx-community/parakeet-ctc-0.6b-ONNX`.
 - Corpus: CohereX fixture transcripts and audio files; transcript text was
   used only as sidecar alignment input, with no Cohere ONNX decode in-process.
 - Binary: `ctc-align-debug`.
 
-TensorRT result on the Medium Ada host:
+Incorrect artifact/runtime findings:
 
-- Isolated Parakeet CTC TensorRT engine build OOM-killed before writing an
-  engine cache.
-- The 35s profile attempt used `1 GiB` workspace and reached about `31.6 GiB`
-  RSS before the kernel killed `ctc-align-debug`.
-- A constrained 33s max profile with `256 MiB` workspace and builder
-  optimization level `0` also OOM-killed at the same system-memory ceiling.
-- Earlier attempts that loaded Cohere ONNX in the same process also OOM-killed,
-  but the isolated sidecar run confirms the TensorRT build itself is too large
-  for this instance/RAM profile.
+- `onnx/model_int8.onnx` is a poor TensorRT target here: isolated TensorRT
+  builds OOM-killed around `31.6 GiB` RSS before writing an engine cache.
+- `onnx/model_int8.onnx` also ran much slower under CUDA EP than the full-float
+  graph.
+- `onnx/model_fp16.onnx` loaded and TensorRT could build it, but CUDA and
+  TensorRT both returned all-NaN logits for the tested fixture.
+- `onnx/model.onnx` is the usable server artifact. CUDA EP returns finite logits
+  and TensorRT returns finite logits when `ASR_CTC_ALIGN_TRT_FP16=false`.
+- TensorRT FP16 builder mode returned all-NaN logits for this graph/runtime even
+  when starting from the full-float ONNX graph, so CTC TensorRT FP16 is now
+  opt-in rather than the default.
 
-CUDA EP sidecar-only runtime, using one warmup and three measured repeats:
+Full-float CUDA EP sidecar-only runtime, using one warmup and five measured
+repeats:
 
 | File | Audio | Words | Mean Align | Realtime |
 | --- | ---: | ---: | ---: | ---: |
-| `amelia_earhart_noisy.c431d09f.wav` | `31.800 s` | `74` | `1402.52 ms` | `22.67x` |
-| `david-gooding-noisy.mp3` | `30.154 s` | `86` | `1327.53 ms` | `22.71x` |
-| `hur.mp3` | `165.295 s` | `411` | `6522.90 ms` | `25.34x` |
+| `amelia_earhart_noisy.c431d09f.wav` | `31.800 s` | `74` | `46.44 ms` | `684.82x` |
+| `david-gooding-noisy.mp3` | `30.154 s` | `86` | `38.74 ms` | `778.32x` |
+| `hur.mp3` | `165.295 s` | `411` | `479.73 ms` | `344.56x` |
+
+Measured sidecar memory footprint:
+
+| Mode | File | Peak Host RSS | Peak GPU Memory |
+| --- | --- | ---: | ---: |
+| CUDA EP, full-float ONNX | `amelia_earhart_noisy.c431d09f.wav` | `1081.9 MiB` | `3256 MiB` |
+| CUDA EP, full-float ONNX | `hur.mp3` | `1187.1 MiB` | `6332 MiB` |
+| TensorRT cached engine, full-float ONNX, FP16 disabled | `amelia_earhart_noisy.c431d09f.wav` | `8408.8 MiB` | `3270 MiB` |
+| TensorRT fresh build, full-float ONNX, FP16 disabled | `amelia_earhart_noisy.c431d09f.wav` | `8948.9 MiB` | `3270 MiB` |
+
+Full-float TensorRT sidecar runtime with `ASR_CTC_ALIGN_TRT_FP16=false`,
+35-second profile, one warmup, and five measured repeats:
+
+| File | Audio | Words | Mean Align | Realtime |
+| --- | ---: | ---: | ---: | ---: |
+| `amelia_earhart_noisy.c431d09f.wav` | `31.800 s` | `74` | `78.61 ms` | `404.53x` |
+| `david-gooding-noisy.mp3` | `30.154 s` | `86` | `68.18 ms` | `442.24x` |
+
+The cached TensorRT engine for the 35-second profile was `2.4 GiB` on disk.
+The full-float CUDA EP was faster than this constrained TensorRT engine on the
+short fixtures, but both are fast enough for tiny-instance sidecar deployment.
+
+### Parakeet Sidecar vs CohereX
+
+Comparison target: CohereX default wav2vec2 alignment, loaded on CUDA
+(`metadata_type=torchaudio`, model device `cuda:0`), using the same CohereX
+fixture transcript segments and audio. This compares sidecar agreement with
+CohereX's stored wav2vec2 regression alignment, not absolute timestamp accuracy
+against a manually annotated corpus.
+
+CohereX wav2vec2 alignment speed:
+
+| File | Audio | Words | Mean Align | Realtime |
+| --- | ---: | ---: | ---: | ---: |
+| `amelia_earhart_noisy.c431d09f.wav` | `31.800 s` | `74` | `258.50 ms` | `123.02x` |
+| `david-gooding-noisy.mp3` | `30.096 s` | `86` | `201.36 ms` | `149.46x` |
+| `hur.mp3` | `165.326 s` | `411` | `1102.25 ms` | `149.99x` |
+
+CohereX alignment memory across the same run: peak host RSS `1512.1 MiB`, peak
+GPU memory `1848 MiB`.
+
+Speed ratio versus CohereX wav2vec2:
+
+| File | Parakeet CUDA | Parakeet TensorRT |
+| --- | ---: | ---: |
+| `amelia_earhart_noisy.c431d09f.wav` | `5.57x` faster | `3.33x` faster |
+| `david-gooding-noisy.mp3` | `5.20x` faster | `3.00x` faster |
+| `hur.mp3` | `2.30x` faster | Not run with the 35s TensorRT profile |
+
+Parakeet sidecar word-boundary deltas versus CohereX's stored wav2vec2
+alignment:
+
+| File | Matched | Mean Start Delta | Mean End Delta | Mean Midpoint Delta | p50 Mid | p95 Mid |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| `amelia_earhart_noisy.c431d09f.wav` | `74/74` | `38.76 ms` | `134.38 ms` | `74.70 ms` | `41 ms` | `290 ms` |
+| `david-gooding-noisy.mp3` | `86/86` | `80.40 ms` | `195.35 ms` | `136.37 ms` | `110 ms` | `360 ms` |
+| `hur.mp3` | `411/411` | `75.26 ms` | `176.86 ms` | `114.94 ms` | `70 ms` | `416 ms` |
+
+CohereX reproduces its own regression alignment with zero deltas by definition
+for this comparison. The Parakeet sidecar therefore trades some disagreement
+with CohereX's wav2vec2 boundaries for substantially higher speed.
 
 This benchmark is a performance-only sidecar measurement. It intentionally does
 not compare word-boundary accuracy against CohereX's alignment JSON.
