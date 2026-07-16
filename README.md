@@ -99,7 +99,7 @@ The local directory should contain:
 - `preprocessor_config.json`
 - `vocab.json`
 
-The `cohere-mlx` Rust backend starts the owned Swift runtime under `apple/` as a
+The `cohere-mlx` Rust backend starts the Swift runtime under `apple/` as a
 persistent child process. The model is loaded once per worker and subsequent
 audio windows use a newline-delimited request/response protocol over standard
 input and output. Build that package with `swift build -c release` or set
