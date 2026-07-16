@@ -244,7 +244,7 @@ impl DecoderState {
                 self.append_processing_samples(sink, &samples).await
             }
             RequestDecoder::Compressed(handle) => {
-                self.send_decoder_bytes(handle, chunk).await?;
+                self.send_decoder_bytes(handle, chunk, sink).await?;
                 self.flush_decoder(handle, sink, false).await
             }
         }
@@ -263,21 +263,23 @@ impl DecoderState {
                 self.append_processing_samples(sink, &tail).await
             }
             RequestDecoder::Compressed(handle) => {
-                self.send_decoder_bytes(handle, Bytes::new()).await?;
+                self.send_decoder_bytes(handle, Bytes::new(), sink).await?;
                 self.flush_decoder(handle, sink, true).await
             }
         }
     }
 
-    async fn send_decoder_bytes(
+    async fn send_decoder_bytes<S: ProcessingSink + Send>(
         &self,
         decoder: &mut DecodePipelineHandle,
         data: Bytes,
+        sink: &mut S,
     ) -> Result<()> {
         loop {
             match decoder.send(data.clone()) {
                 Ok(()) => return Ok(()),
                 Err(soundkit_decoder::DecodeError::InputBufferFull) => {
+                    self.flush_decoder(decoder, sink, false).await?;
                     tokio::task::yield_now().await;
                 }
                 Err(error) => {

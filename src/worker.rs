@@ -1333,6 +1333,7 @@ impl WorkerState {
             match decoder.send(data.clone()) {
                 Ok(()) => break,
                 Err(soundkit_decoder::DecodeError::InputBufferFull) => {
+                    self.drain_decoder(decoder, chunker, total_samples)?;
                     tokio::task::yield_now().await;
                 }
                 Err(error) => return Err(anyhow::anyhow!("decoder send failed: {error}")),
@@ -1353,6 +1354,7 @@ impl WorkerState {
             match decoder.send(Bytes::new()) {
                 Ok(()) => break,
                 Err(soundkit_decoder::DecodeError::InputBufferFull) => {
+                    self.drain_decoder(decoder, chunker, total_samples)?;
                     tokio::task::yield_now().await;
                 }
                 Err(error) => return Err(anyhow::anyhow!("decoder EOF send failed: {error}")),
