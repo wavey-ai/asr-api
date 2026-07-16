@@ -50,7 +50,7 @@ audio-decoder = ["dep:av-api", "dep:soundkit", "dep:soundkit-decoder"]
 anyhow = "1.0"
 asr-onnx = { path = "../asr-onnx", optional = true }
 async-trait = "0.1"
-av-api = { git = "https://github.com/wavey-ai/av-api.git", optional = true }
+av-api = { git = "https://github.com/wavey-ai/av-api.git", rev = "47357284d18f9962b017d7e345fdaf886b922b63", optional = true }
 bytes = "1"
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 clap = { version = "4.5", features = ["derive", "env"] }
