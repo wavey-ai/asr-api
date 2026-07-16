@@ -1,6 +1,6 @@
 # asr-api Apple MLX Runtime
 
-This package is the owned Swift/MLX runtime boundary for `asr-api`.
+This package provides the Swift/MLX runtime used by `asr-api` on Apple Silicon.
 
 Build it from this directory:
 
@@ -16,5 +16,5 @@ The Rust backend runs the executable with `--server`, keeping one model instance
 loaded and sending feature-file requests over standard input. Direct one-shot
 CLI transcription remains available for debugging.
 
-The package intentionally uses `mlx-swift`, matching the `encodec-rs/apple`
-pattern, rather than linking Rust directly against `mlx-c`.
+The package follows the `encodec-rs/apple` pattern and uses `mlx-swift` for the
+MLX graph runtime.

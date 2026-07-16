@@ -88,15 +88,16 @@ Cohere ONNX expects:
 - `generation_config.json`
 - `preprocessor_config.json`
 
-Cohere MLX expects a local copy of Wavey's Cohere Transcribe MLX bundle. Download
-the bundle from the Wavey Hugging Face model repo you have access to, then point
-`ASR_MODEL_DIR` at that directory.
+Cohere MLX expects a local copy of `CohereLabs/cohere-transcribe-03-2026` from
+Hugging Face. Use a Hugging Face login that has access to Cohere's gated model,
+then point `ASR_MODEL_DIR` at that directory.
 
 The local directory should contain:
 
 - `model.safetensors`
 - `config.json`
 - `preprocessor_config.json`
+- `tokenizer.model`
 - `vocab.json`
 
 The `cohere-mlx` Rust backend starts the Swift runtime under `apple/` as a
@@ -116,16 +117,24 @@ Parakeet ONNX/TDT expects:
 - `tokens.txt`
 
 The ONNX and MLX artifacts can live in the same model directory when a host
-needs both paths. Generate `vocab.json` for MLX from `tokenizer.model`:
+needs both paths. Download and prepare the MLX directory with:
 
 ```bash
+huggingface-cli login
+
+huggingface-cli download CohereLabs/cohere-transcribe-03-2026 \
+  --local-dir models/cohere-transcribe-03-2026
+
 python3 scripts/cohere-extract-vocab.py \
   --model-dir models/cohere-transcribe-03-2026
 ```
 
-Model payloads are not checked into Git. The MLX bundle normally comes from the
-Wavey Hugging Face model repo. For hosts that still use the bucket mirror, seed
-or update the Cohere bundle with:
+The extraction step writes `vocab.json` from the downloaded `tokenizer.model`.
+
+Model payloads are not checked into Git. The `wavey-ai` Hugging Face account
+hosts Wavey-owned auxiliary bundles. Cohere Transcribe weights come from
+`CohereLabs/cohere-transcribe-03-2026`. For hosts that still use the Wavey bucket
+mirror, seed or update the Cohere bundle with:
 
 ```bash
 AWS_ACCESS_KEY_ID=... \
