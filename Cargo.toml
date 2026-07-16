@@ -80,8 +80,8 @@ rustfft = { version = "6.2", optional = true }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 sha2 = "0.10"
-soundkit = { git = "https://github.com/wavey-ai/soundkit.git", package = "soundkit", optional = true }
-soundkit-decoder = { git = "https://github.com/wavey-ai/soundkit.git", package = "soundkit-decoder", optional = true }
+soundkit = { git = "https://github.com/wavey-ai/soundkit.git", rev = "343e02218d9c7beda86807f178f5388e3f8d4887", package = "soundkit", optional = true }
+soundkit-decoder = { git = "https://github.com/wavey-ai/soundkit.git", rev = "343e02218d9c7beda86807f178f5388e3f8d4887", package = "soundkit-decoder", optional = true }
 tokio = { version = "1.45", features = ["full"] }
 tokio-tungstenite = { version = "0.27", features = ["rustls-tls-webpki-roots"] }
 tokenizers = { version = "0.22.2", default-features = false, features = ["onig"], optional = true }
