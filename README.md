@@ -94,8 +94,10 @@ Cohere MLX expects:
 - `config.json`
 - `vocab.json`
 
-The `cohere-mlx` Rust backend invokes the owned Swift runtime under `apple/`.
-Build that package with `swift build -c release` or set
+The `cohere-mlx` Rust backend starts the owned Swift runtime under `apple/` as a
+persistent child process. The model is loaded once per worker and subsequent
+audio windows use a newline-delimited request/response protocol over standard
+input and output. Build that package with `swift build -c release` or set
 `ASR_MLX_TRANSCRIBE_BIN`. The Swift package contains the owned Cohere
 encoder/decoder MLX graph and does not use `cohere-transcribe-rs`.
 

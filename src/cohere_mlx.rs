@@ -6,11 +6,11 @@ use crate::timestamps::{duration_ms_for_samples, estimate_word_timestamps_from_t
 use anyhow::{Context, Result};
 use crossbeam_channel::{bounded, Sender};
 use ndarray::Array2;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::fs;
-use std::io::Write;
+use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -39,7 +39,7 @@ impl CohereMlxBackend {
         let (ready_tx, ready_rx) = std::sync::mpsc::channel();
 
         thread::spawn(move || {
-            let worker = match CohereMlxWorker::new(runtime, model_dir, max_new_tokens) {
+            let mut worker = match CohereMlxWorker::new(runtime, model_dir, max_new_tokens) {
                 Ok(worker) => {
                     let _ = ready_tx.send(Ok(()));
                     worker
@@ -59,7 +59,7 @@ impl CohereMlxBackend {
         });
 
         let ready = ready_rx
-            .recv_timeout(Duration::from_secs(10))
+            .recv_timeout(Duration::from_secs(120))
             .context("timed out waiting for Cohere MLX worker initialization")?;
         if let Err(error) = ready {
             anyhow::bail!(error);
@@ -89,10 +89,10 @@ impl CohereMlxBackend {
 }
 
 struct CohereMlxWorker {
-    runtime: PathBuf,
-    model_dir: PathBuf,
+    child: Child,
+    stdin: ChildStdin,
+    stdout: BufReader<ChildStdout>,
     frontend: CohereFrontend,
-    max_new_tokens: usize,
 }
 
 impl CohereMlxWorker {
@@ -106,50 +106,79 @@ impl CohereMlxWorker {
             load_json::<CoherePreprocessorConfig>(&model_dir.join("preprocessor_config.json"))
                 .context("failed to load Cohere preprocessor_config.json")?;
         let frontend = CohereFrontend::new(preprocessor)?;
-        info!(runtime = %runtime.display(), "initialized Cohere Swift MLX backend wrapper");
+        let mut child = Command::new(&runtime)
+            .arg("--model-dir")
+            .arg(&model_dir)
+            .arg("--server")
+            .arg("--max-new-tokens")
+            .arg(max_new_tokens.to_string())
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::inherit())
+            .spawn()
+            .with_context(|| format!("failed to start {}", runtime.display()))?;
+        let stdin = child
+            .stdin
+            .take()
+            .context("Cohere Swift MLX runtime did not open stdin")?;
+        let stdout = child
+            .stdout
+            .take()
+            .context("Cohere Swift MLX runtime did not open stdout")?;
+        let mut stdout = BufReader::new(stdout);
+        let mut ready_line = String::new();
+        anyhow::ensure!(
+            stdout.read_line(&mut ready_line)? > 0,
+            "Cohere Swift MLX runtime exited before initialization"
+        );
+        let ready: SwiftServerReady = serde_json::from_str(&ready_line)
+            .context("failed to parse Cohere Swift MLX runtime ready response")?;
+        anyhow::ensure!(ready.ready, "Cohere Swift MLX runtime was not ready");
+        info!(runtime = %runtime.display(), "initialized persistent Cohere Swift MLX backend");
         Ok(Self {
-            runtime,
-            model_dir,
+            child,
+            stdin,
+            stdout,
             frontend,
-            max_new_tokens,
         })
     }
 
-    fn transcribe(&self, id: u64, seq: u32, samples: Vec<f32>) -> Result<WindowTranscription> {
+    fn transcribe(&mut self, id: u64, seq: u32, samples: Vec<f32>) -> Result<WindowTranscription> {
         let started = Instant::now();
         let features = self.frontend.compute(&samples)?;
         let feature_shape = features.dim();
         let feature_path = write_temp_features(id, seq, &features)?;
-        let output = Command::new(&self.runtime)
-            .arg("--model-dir")
-            .arg(&self.model_dir)
-            .arg("--features-f32le")
-            .arg(&feature_path)
-            .arg("--feature-count")
-            .arg(feature_shape.0.to_string())
-            .arg("--feature-steps")
-            .arg(feature_shape.1.to_string())
-            .arg("--max-new-tokens")
-            .arg(self.max_new_tokens.to_string())
-            .output()
-            .with_context(|| format!("failed to run {}", self.runtime.display()));
-        let _ = fs::remove_file(&feature_path);
-        let output = output?;
+        let response = (|| -> Result<SwiftServerResponse> {
+            serde_json::to_writer(
+                &mut self.stdin,
+                &SwiftServerRequest {
+                    features_f32le: feature_path.to_string_lossy().as_ref(),
+                    feature_count: feature_shape.0,
+                    feature_steps: feature_shape.1,
+                },
+            )?;
+            self.stdin.write_all(b"\n")?;
+            self.stdin.flush()?;
 
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
+            let mut line = String::new();
+            anyhow::ensure!(
+                self.stdout.read_line(&mut line)? > 0,
+                "Cohere Swift MLX runtime exited while transcribing"
+            );
+            serde_json::from_str(&line)
+                .context("failed to parse Cohere Swift MLX runtime server response")
+        })();
+        let _ = fs::remove_file(&feature_path);
+        let response = response?;
+        if !response.ok {
             anyhow::bail!(
-                "Cohere Swift MLX runtime failed with status {}: {}",
-                output.status,
-                stderr.trim()
+                "Cohere Swift MLX runtime failed: {}",
+                response.error.as_deref().unwrap_or("unknown server error")
             );
         }
-        if env_var_truthy("ASR_COHERE_MLX_DEBUG_STDERR") && !output.stderr.is_empty() {
-            eprint!("{}", String::from_utf8_lossy(&output.stderr));
-        }
-
-        let response: SwiftTranscription = serde_json::from_slice(&output.stdout)
-            .context("failed to parse Cohere Swift MLX runtime JSON output")?;
+        let response = response
+            .result
+            .context("Cohere Swift MLX runtime omitted its transcription result")?;
         let mut words = response
             .words
             .unwrap_or_default()
@@ -188,6 +217,32 @@ impl CohereMlxWorker {
             words,
         })
     }
+}
+
+impl Drop for CohereMlxWorker {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct SwiftServerReady {
+    ready: bool,
+}
+
+#[derive(Debug, Serialize)]
+struct SwiftServerRequest<'a> {
+    features_f32le: &'a str,
+    feature_count: usize,
+    feature_steps: usize,
+}
+
+#[derive(Debug, Deserialize)]
+struct SwiftServerResponse {
+    ok: bool,
+    result: Option<SwiftTranscription>,
+    error: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]

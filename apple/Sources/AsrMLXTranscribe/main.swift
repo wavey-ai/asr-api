@@ -10,6 +10,7 @@ struct Options {
     var featureSteps: Int?
     var maxNewTokens = 384
     var checkOnly = false
+    var server = false
 }
 
 func parseOptions() throws -> Options {
@@ -54,11 +55,69 @@ func parseOptions() throws -> Options {
             options.maxNewTokens = parsed
         case "--check":
             options.checkOnly = true
+        case "--server":
+            options.server = true
         default:
             throw ASRMLXRuntimeError.invalidBundle("unknown argument \(arg)")
         }
     }
     return options
+}
+
+struct ServerRequest: Decodable {
+    let featuresF32LE: String
+    let featureCount: Int
+    let featureSteps: Int
+
+    enum CodingKeys: String, CodingKey {
+        case featuresF32LE = "features_f32le"
+        case featureCount = "feature_count"
+        case featureSteps = "feature_steps"
+    }
+}
+
+struct ServerReady: Encodable {
+    let ready = true
+}
+
+struct ServerSuccess: Encodable {
+    let ok = true
+    let result: ASRTranscriptionResult
+}
+
+struct ServerFailure: Encodable {
+    let ok = false
+    let error: String
+}
+
+func writeJSON<T: Encodable>(_ value: T) throws {
+    let data = try JSONEncoder().encode(value)
+    FileHandle.standardOutput.write(data)
+    FileHandle.standardOutput.write(Data([0x0a]))
+}
+
+func runServer(runtime: CohereMLXRuntime, maxNewTokens: Int) throws {
+    try writeJSON(ServerReady())
+    while let line = readLine() {
+        guard let data = line.data(using: .utf8), !data.isEmpty else {
+            continue
+        }
+        do {
+            let request = try JSONDecoder().decode(ServerRequest.self, from: data)
+            let features = try loadFloat32LittleEndianAudio(
+                from: URL(fileURLWithPath: request.featuresF32LE)
+            )
+            let result = try runtime.transcribeFeatures(
+                features: features,
+                featureCount: request.featureCount,
+                featureSteps: request.featureSteps,
+                maxNewTokens: maxNewTokens
+            )
+            try writeJSON(ServerSuccess(result: result))
+        } catch {
+            try writeJSON(ServerFailure(error: error.localizedDescription))
+        }
+    }
 }
 
 do {
@@ -80,6 +139,11 @@ do {
         let data = try JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys])
         FileHandle.standardOutput.write(data)
         FileHandle.standardOutput.write(Data([0x0a]))
+        exit(0)
+    }
+
+    if options.server {
+        try runServer(runtime: runtime, maxNewTokens: options.maxNewTokens)
         exit(0)
     }
 

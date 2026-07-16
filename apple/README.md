@@ -12,5 +12,9 @@ swift build -c release
 `ASR_COHERE_BACKEND=mlx` is selected. Set `ASR_MLX_TRANSCRIBE_BIN` to override
 the executable path.
 
+The Rust backend runs the executable with `--server`, keeping one model instance
+loaded and sending feature-file requests over standard input. Direct one-shot
+CLI transcription remains available for debugging.
+
 The package intentionally uses `mlx-swift`, matching the `encodec-rs/apple`
 pattern, rather than linking Rust directly against `mlx-c`.
