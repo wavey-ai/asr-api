@@ -1,10 +1,11 @@
 # asr-api
 
-`asr-api` provides a Deepgram-compatible `/v1/listen` API for ASR backends
-including Cohere Transcribe and Parakeet/TDT. asr-api supports buffered HTTP
-uploads, streaming HTTP request bodies, WebSocket audio, and WebTransport over
-HTTP/3. It normalizes input audio to mono `16 kHz` PCM, runs inference through
-the configured backend, and returns Deepgram-compatible JSON.
+[`asr-api`](https://github.com/wavey-ai/asr-api) provides a
+Deepgram-compatible `/v1/listen` API for ASR backends including Cohere
+Transcribe and Parakeet/TDT. It supports buffered HTTP uploads, streaming HTTP
+request bodies, WebSocket audio, and WebTransport over HTTP/3. It normalizes
+input audio to mono `16 kHz` PCM, runs inference through the configured backend,
+and returns Deepgram-compatible JSON.
 
 ## Useful For
 
@@ -28,7 +29,9 @@ The runtime has three roles:
 1. `ingress`: accepts `/v1/listen` through the enabled `web-service`
    transports, including buffered HTTP uploads, streaming HTTP request bodies,
    WebSocket audio, and WebTransport over HTTP/3. It writes request bytes and
-   metadata into `upload-response` and waits for a worker response.
+   metadata into
+   [`upload-response`](https://github.com/wavey-ai/web-services/tree/main/upload-response)
+   and waits for a worker response.
 2. `decoder`: CPU processing stage. It discovers ingress origins, claims raw
    request streams, decodes/resamples/downmixes them to mono `16 kHz` `f32`,
    and writes canonical PCM to the `decoded` stage lane.
@@ -38,7 +41,9 @@ The runtime has three roles:
 
 The split keeps model libraries out of ingress, keeps audio codec work off the
 GPU worker, and makes worker throughput visible at the cache/stage boundary.
-The handoff is `upload-response`; there is no Redis sidecar or external queue.
+The handoff is
+[`upload-response`](https://github.com/wavey-ai/web-services/tree/main/upload-response);
+there is no Redis sidecar or external queue.
 
 See [ASR Capability Inventory](docs/asr-capability-inventory.md) for the
 current Cohere and Parakeet backend capability matrix.
@@ -88,9 +93,10 @@ Cohere ONNX expects:
 - `generation_config.json`
 - `preprocessor_config.json`
 
-Cohere MLX expects a local copy of `CohereLabs/cohere-transcribe-03-2026` from
-Hugging Face. Use a Hugging Face login that has access to Cohere's gated model,
-then point `ASR_MODEL_DIR` at that directory.
+Cohere MLX expects a local copy of
+[`CohereLabs/cohere-transcribe-03-2026`](https://huggingface.co/CohereLabs/cohere-transcribe-03-2026)
+from Hugging Face. Use a Hugging Face login that has access to Cohere's gated
+model, then point `ASR_MODEL_DIR` at that directory.
 
 The local directory should contain:
 
@@ -123,15 +129,14 @@ needs both paths. Download and prepare the MLX directory with the setup script:
 scripts/setup-cohere-mlx-model.sh --login
 ```
 
-The script downloads `CohereLabs/cohere-transcribe-03-2026`, writes `vocab.json`
-from the downloaded `tokenizer.model`, and verifies the files the MLX runtime
-loads. If you have already logged in to Hugging Face or set `HF_TOKEN`, omit
-`--login`.
+The script downloads
+[`CohereLabs/cohere-transcribe-03-2026`](https://huggingface.co/CohereLabs/cohere-transcribe-03-2026),
+writes `vocab.json` from the downloaded `tokenizer.model`, and verifies the
+files the MLX runtime loads. If you have already logged in to Hugging Face or
+set `HF_TOKEN`, omit `--login`.
 
-Model payloads are not checked into Git. The `wavey-ai` Hugging Face account
-hosts Wavey-owned auxiliary bundles. Cohere Transcribe weights come from
-`CohereLabs/cohere-transcribe-03-2026`. For hosts that still use the Wavey bucket
-mirror, seed or update the Cohere bundle with:
+Model payloads are not checked into Git. For hosts that still use the Wavey
+bucket mirror, seed or update the Cohere bundle with:
 
 ```bash
 AWS_ACCESS_KEY_ID=... \
