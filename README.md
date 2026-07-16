@@ -117,19 +117,16 @@ Parakeet ONNX/TDT expects:
 - `tokens.txt`
 
 The ONNX and MLX artifacts can live in the same model directory when a host
-needs both paths. Download and prepare the MLX directory with:
+needs both paths. Download and prepare the MLX directory with the setup script:
 
 ```bash
-huggingface-cli login
-
-huggingface-cli download CohereLabs/cohere-transcribe-03-2026 \
-  --local-dir models/cohere-transcribe-03-2026
-
-python3 scripts/cohere-extract-vocab.py \
-  --model-dir models/cohere-transcribe-03-2026
+scripts/setup-cohere-mlx-model.sh --login
 ```
 
-The extraction step writes `vocab.json` from the downloaded `tokenizer.model`.
+The script downloads `CohereLabs/cohere-transcribe-03-2026`, writes `vocab.json`
+from the downloaded `tokenizer.model`, and verifies the files the MLX runtime
+loads. If you have already logged in to Hugging Face or set `HF_TOKEN`, omit
+`--login`.
 
 Model payloads are not checked into Git. The `wavey-ai` Hugging Face account
 hosts Wavey-owned auxiliary bundles. Cohere Transcribe weights come from
