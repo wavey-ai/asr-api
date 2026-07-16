@@ -13,8 +13,8 @@ dependencies = [
 
 [[package]]
 name = "access-unit"
-version = "0.1.2"
-source = "git+https://github.com/wavey-ai/access-unit.git#958f0dc80b093afbe9ad598b3232f18c42cbb78f"
+version = "0.1.3"
+source = "git+https://github.com/wavey-ai/access-unit.git#80decbb8c7ae0de31755c80c92958665eea28409"
 dependencies = [
  "bytes",
 ]
@@ -168,8 +168,8 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
- "soundkit 0.12.2 (git+https://github.com/wavey-ai/soundkit.git?rev=343e02218d9c7beda86807f178f5388e3f8d4887)",
- "soundkit-decoder 0.1.0 (git+https://github.com/wavey-ai/soundkit.git?rev=343e02218d9c7beda86807f178f5388e3f8d4887)",
+ "soundkit",
+ "soundkit-decoder",
  "tokenizers",
  "tokio",
  "tokio-tungstenite",
@@ -235,13 +235,13 @@ checksum = "c08606f8c3cbf4ce6ec8e28fb0014a2c086708fe954eaa885384a6165172e7e8"
 [[package]]
 name = "av-api"
 version = "0.1.0"
-source = "git+https://github.com/wavey-ai/av-api.git?rev=47357284d18f9962b017d7e345fdaf886b922b63#47357284d18f9962b017d7e345fdaf886b922b63"
+source = "git+https://github.com/wavey-ai/av-api.git?rev=1434e95a84781482a67cb3759d79b1bb166a3947#1434e95a84781482a67cb3759d79b1bb166a3947"
 dependencies = [
  "anyhow",
  "bytes",
  "http",
- "soundkit 0.12.2 (git+https://github.com/wavey-ai/soundkit.git)",
- "soundkit-decoder 0.1.0 (git+https://github.com/wavey-ai/soundkit.git)",
+ "soundkit",
+ "soundkit-decoder",
  "upload-response",
 ]
 
@@ -1277,9 +1277,9 @@ dependencies = [
 
 [[package]]
 name = "h2"
-version = "0.4.13"
+version = "0.4.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2f44da3a8150a6703ed5d34e164b875fd14c2cdab9af1252a9a1020bde2bdc54"
+checksum = "6cb093c84e8bd9b188d4c4a8cb6579fc016968d14c99882163cd3ff402a4f155"
 dependencies = [
  "atomic-waker",
  "bytes",
@@ -1426,9 +1426,9 @@ dependencies = [
 
 [[package]]
 name = "http"
-version = "1.4.0"
+version = "1.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e3ba2a386d7f85a81f119ad7498ebe444d2e22c2af0b86b069416ace48b3311a"
+checksum = "6970f50e31d6fc17d3fa27329444bfa74e196cf62e95052a3f6fee181dba6425"
 dependencies = [
  "bytes",
  "itoa",
@@ -1486,9 +1486,9 @@ checksum = "df3b46402a9d5adb4c86a0cf463f42e19994e3ee891101b1841f30a545cb49a9"
 
 [[package]]
 name = "hyper"
-version = "1.9.0"
+version = "1.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6299f016b246a94207e63da54dbe807655bf9e00044f73ded42c3ac5305fbcca"
+checksum = "55281c53a1894c864990125767da440a4e630446785086f52523b20033b74498"
 dependencies = [
  "atomic-waker",
  "bytes",
@@ -1515,11 +1515,11 @@ dependencies = [
  "http",
  "hyper",
  "hyper-util",
- "rustls 0.23.38",
+ "rustls 0.23.42",
  "tokio",
  "tokio-rustls",
  "tower-service",
- "webpki-roots 1.0.6",
+ "webpki-roots 1.0.8",
 ]
 
 [[package]]
@@ -1858,7 +1858,7 @@ checksum = "52ff2c0fe9bc6cb6b14a0592c2ff4fa9ceb83eea9db979b0487cd054946a2b8f"
 [[package]]
 name = "libflac-sys"
 version = "0.3.4"
-source = "git+https://github.com/mgeier/libflac-sys.git#1cb7eda7659989dd401745945e9c030f5bb076d9"
+source = "git+https://github.com/mgeier/libflac-sys.git#1feb6450c4e0dbc6c6dcaa9a71fac5200c0ffbaf"
 dependencies = [
  "cmake",
  "libc",
@@ -2503,9 +2503,9 @@ checksum = "19f132c84eca552bf34cab8ec81f1c1dcc229b811638f9d283dceabe58c5569e"
 [[package]]
 name = "playlists"
 version = "0.1.3"
-source = "git+https://github.com/wavey-ai/playlists.git#a069d9ec7bd97f1b96a6b435541be8304fc680a4"
+source = "git+https://codeberg.org/wavey-ai/playlists.git?rev=a069d9ec7bd97f1b96a6b435541be8304fc680a4#a069d9ec7bd97f1b96a6b435541be8304fc680a4"
 dependencies = [
- "access-unit 0.1.2 (registry+https://github.com/rust-lang/crates.io-index)",
+ "access-unit 0.1.2",
  "bytes",
  "chrono",
  "flate2",
@@ -2666,7 +2666,7 @@ dependencies = [
  "quinn-proto",
  "quinn-udp",
  "rustc-hash 2.1.2",
- "rustls 0.23.38",
+ "rustls 0.23.42",
  "socket2",
  "thiserror 2.0.18",
  "tokio",
@@ -2686,7 +2686,7 @@ dependencies = [
  "rand 0.9.4",
  "ring",
  "rustc-hash 2.1.2",
- "rustls 0.23.38",
+ "rustls 0.23.42",
  "rustls-pki-types",
  "slab",
  "thiserror 2.0.18",
@@ -2945,7 +2945,7 @@ dependencies = [
  "percent-encoding",
  "pin-project-lite",
  "quinn",
- "rustls 0.23.38",
+ "rustls 0.23.42",
  "rustls-pki-types",
  "serde",
  "serde_json",
@@ -2961,7 +2961,7 @@ dependencies = [
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "web-sys",
- "webpki-roots 1.0.6",
+ "webpki-roots 1.0.8",
 ]
 
 [[package]]
@@ -3068,9 +3068,9 @@ dependencies = [
 
 [[package]]
 name = "rustls"
-version = "0.23.38"
+version = "0.23.42"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "69f9466fb2c14ea04357e91413efb882e2a6d4a406e625449bc0a5d360d53a21"
+checksum = "3c54fcab019b409d04215d3a17cb438fd7fbf192ee61461f20f4fe18704bc138"
 dependencies = [
  "aws-lc-rs",
  "log",
@@ -3093,9 +3093,9 @@ dependencies = [
 
 [[package]]
 name = "rustls-pki-types"
-version = "1.14.0"
+version = "1.15.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "be040f8b0a225e40375822a563fa9524378b9d63112f53e19ffff34df5d33fdd"
+checksum = "764899a24af3980067ee14bc143654f297b22eaebfe3c7b6b211920a5a59b046"
 dependencies = [
  "web-time",
  "zeroize",
@@ -3343,38 +3343,14 @@ dependencies = [
 ]
 
 [[package]]
-name = "soundkit"
-version = "0.12.2"
-source = "git+https://github.com/wavey-ai/soundkit.git#343e02218d9c7beda86807f178f5388e3f8d4887"
-dependencies = [
- "byteorder",
- "bytes",
- "frame-header",
- "rubato",
- "serde",
-]
-
-[[package]]
 name = "soundkit-aac"
 version = "0.1.0"
 source = "git+https://github.com/wavey-ai/soundkit.git?rev=343e02218d9c7beda86807f178f5388e3f8d4887#343e02218d9c7beda86807f178f5388e3f8d4887"
 dependencies = [
- "access-unit 0.1.2 (git+https://github.com/wavey-ai/access-unit.git)",
+ "access-unit 0.1.3",
  "fdk-aac",
  "mp4",
- "soundkit 0.12.2 (git+https://github.com/wavey-ai/soundkit.git?rev=343e02218d9c7beda86807f178f5388e3f8d4887)",
- "tracing",
-]
-
-[[package]]
-name = "soundkit-aac"
-version = "0.1.0"
-source = "git+https://github.com/wavey-ai/soundkit.git#343e02218d9c7beda86807f178f5388e3f8d4887"
-dependencies = [
- "access-unit 0.1.2 (git+https://github.com/wavey-ai/access-unit.git)",
- "fdk-aac",
- "mp4",
- "soundkit 0.12.2 (git+https://github.com/wavey-ai/soundkit.git)",
+ "soundkit",
  "tracing",
 ]
 
@@ -3383,35 +3359,17 @@ name = "soundkit-decoder"
 version = "0.1.0"
 source = "git+https://github.com/wavey-ai/soundkit.git?rev=343e02218d9c7beda86807f178f5388e3f8d4887#343e02218d9c7beda86807f178f5388e3f8d4887"
 dependencies = [
- "access-unit 0.1.2 (registry+https://github.com/rust-lang/crates.io-index)",
+ "access-unit 0.1.2",
  "bytes",
  "frame-header",
  "rtrb",
- "soundkit 0.12.2 (git+https://github.com/wavey-ai/soundkit.git?rev=343e02218d9c7beda86807f178f5388e3f8d4887)",
- "soundkit-aac 0.1.0 (git+https://github.com/wavey-ai/soundkit.git?rev=343e02218d9c7beda86807f178f5388e3f8d4887)",
- "soundkit-flac 0.1.0 (git+https://github.com/wavey-ai/soundkit.git?rev=343e02218d9c7beda86807f178f5388e3f8d4887)",
- "soundkit-mp3 0.1.0 (git+https://github.com/wavey-ai/soundkit.git?rev=343e02218d9c7beda86807f178f5388e3f8d4887)",
- "soundkit-ogg-opus 0.0.1 (git+https://github.com/wavey-ai/soundkit.git?rev=343e02218d9c7beda86807f178f5388e3f8d4887)",
- "soundkit-opus 0.0.1 (git+https://github.com/wavey-ai/soundkit.git?rev=343e02218d9c7beda86807f178f5388e3f8d4887)",
- "soundkit-webm 0.0.1 (git+https://github.com/wavey-ai/soundkit.git?rev=343e02218d9c7beda86807f178f5388e3f8d4887)",
-]
-
-[[package]]
-name = "soundkit-decoder"
-version = "0.1.0"
-source = "git+https://github.com/wavey-ai/soundkit.git#343e02218d9c7beda86807f178f5388e3f8d4887"
-dependencies = [
- "access-unit 0.1.2 (registry+https://github.com/rust-lang/crates.io-index)",
- "bytes",
- "frame-header",
- "rtrb",
- "soundkit 0.12.2 (git+https://github.com/wavey-ai/soundkit.git)",
- "soundkit-aac 0.1.0 (git+https://github.com/wavey-ai/soundkit.git)",
- "soundkit-flac 0.1.0 (git+https://github.com/wavey-ai/soundkit.git)",
- "soundkit-mp3 0.1.0 (git+https://github.com/wavey-ai/soundkit.git)",
- "soundkit-ogg-opus 0.0.1 (git+https://github.com/wavey-ai/soundkit.git)",
- "soundkit-opus 0.0.1 (git+https://github.com/wavey-ai/soundkit.git)",
- "soundkit-webm 0.0.1 (git+https://github.com/wavey-ai/soundkit.git)",
+ "soundkit",
+ "soundkit-aac",
+ "soundkit-flac",
+ "soundkit-mp3",
+ "soundkit-ogg-opus",
+ "soundkit-opus",
+ "soundkit-webm",
 ]
 
 [[package]]
@@ -3419,24 +3377,11 @@ name = "soundkit-flac"
 version = "0.1.0"
 source = "git+https://github.com/wavey-ai/soundkit.git?rev=343e02218d9c7beda86807f178f5388e3f8d4887#343e02218d9c7beda86807f178f5388e3f8d4887"
 dependencies = [
- "access-unit 0.1.2 (registry+https://github.com/rust-lang/crates.io-index)",
+ "access-unit 0.1.2",
  "claxon",
  "libc",
  "libflac-sys",
- "soundkit 0.12.2 (git+https://github.com/wavey-ai/soundkit.git?rev=343e02218d9c7beda86807f178f5388e3f8d4887)",
- "tracing",
-]
-
-[[package]]
-name = "soundkit-flac"
-version = "0.1.0"
-source = "git+https://github.com/wavey-ai/soundkit.git#343e02218d9c7beda86807f178f5388e3f8d4887"
-dependencies = [
- "access-unit 0.1.2 (registry+https://github.com/rust-lang/crates.io-index)",
- "claxon",
- "libc",
- "libflac-sys",
- "soundkit 0.12.2 (git+https://github.com/wavey-ai/soundkit.git)",
+ "soundkit",
  "tracing",
 ]
 
@@ -3446,17 +3391,7 @@ version = "0.1.0"
 source = "git+https://github.com/wavey-ai/soundkit.git?rev=343e02218d9c7beda86807f178f5388e3f8d4887#343e02218d9c7beda86807f178f5388e3f8d4887"
 dependencies = [
  "nanomp3",
- "soundkit 0.12.2 (git+https://github.com/wavey-ai/soundkit.git?rev=343e02218d9c7beda86807f178f5388e3f8d4887)",
- "tracing",
-]
-
-[[package]]
-name = "soundkit-mp3"
-version = "0.1.0"
-source = "git+https://github.com/wavey-ai/soundkit.git#343e02218d9c7beda86807f178f5388e3f8d4887"
-dependencies = [
- "nanomp3",
- "soundkit 0.12.2 (git+https://github.com/wavey-ai/soundkit.git)",
+ "soundkit",
  "tracing",
 ]
 
@@ -3467,20 +3402,8 @@ source = "git+https://github.com/wavey-ai/soundkit.git?rev=343e02218d9c7beda8680
 dependencies = [
  "frame-header",
  "memchr",
- "soundkit 0.12.2 (git+https://github.com/wavey-ai/soundkit.git?rev=343e02218d9c7beda86807f178f5388e3f8d4887)",
- "soundkit-opus 0.0.1 (git+https://github.com/wavey-ai/soundkit.git?rev=343e02218d9c7beda86807f178f5388e3f8d4887)",
- "tracing",
-]
-
-[[package]]
-name = "soundkit-ogg-opus"
-version = "0.0.1"
-source = "git+https://github.com/wavey-ai/soundkit.git#343e02218d9c7beda86807f178f5388e3f8d4887"
-dependencies = [
- "frame-header",
- "memchr",
- "soundkit 0.12.2 (git+https://github.com/wavey-ai/soundkit.git)",
- "soundkit-opus 0.0.1 (git+https://github.com/wavey-ai/soundkit.git)",
+ "soundkit",
+ "soundkit-opus",
  "tracing",
 ]
 
@@ -3491,18 +3414,7 @@ source = "git+https://github.com/wavey-ai/soundkit.git?rev=343e02218d9c7beda8680
 dependencies = [
  "frame-header",
  "libopus",
- "soundkit 0.12.2 (git+https://github.com/wavey-ai/soundkit.git?rev=343e02218d9c7beda86807f178f5388e3f8d4887)",
- "tracing",
-]
-
-[[package]]
-name = "soundkit-opus"
-version = "0.0.1"
-source = "git+https://github.com/wavey-ai/soundkit.git#343e02218d9c7beda86807f178f5388e3f8d4887"
-dependencies = [
- "frame-header",
- "libopus",
- "soundkit 0.12.2 (git+https://github.com/wavey-ai/soundkit.git)",
+ "soundkit",
  "tracing",
 ]
 
@@ -3512,19 +3424,8 @@ version = "0.0.1"
 source = "git+https://github.com/wavey-ai/soundkit.git?rev=343e02218d9c7beda86807f178f5388e3f8d4887#343e02218d9c7beda86807f178f5388e3f8d4887"
 dependencies = [
  "frame-header",
- "soundkit 0.12.2 (git+https://github.com/wavey-ai/soundkit.git?rev=343e02218d9c7beda86807f178f5388e3f8d4887)",
- "soundkit-opus 0.0.1 (git+https://github.com/wavey-ai/soundkit.git?rev=343e02218d9c7beda86807f178f5388e3f8d4887)",
- "tracing",
-]
-
-[[package]]
-name = "soundkit-webm"
-version = "0.0.1"
-source = "git+https://github.com/wavey-ai/soundkit.git#343e02218d9c7beda86807f178f5388e3f8d4887"
-dependencies = [
- "frame-header",
- "soundkit 0.12.2 (git+https://github.com/wavey-ai/soundkit.git)",
- "soundkit-opus 0.0.1 (git+https://github.com/wavey-ai/soundkit.git)",
+ "soundkit",
+ "soundkit-opus",
  "tracing",
 ]
 
@@ -3834,7 +3735,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "83865f41768d6c4608fd739e8984e334a3a59f074fcb348ef0be7e5048dc9c9c"
 dependencies = [
  "base64 0.22.1",
- "rustls 0.23.38",
+ "rustls 0.23.42",
  "rustls-pemfile",
  "rustls-pki-types",
  "tokio",
@@ -3844,10 +3745,10 @@ dependencies = [
 [[package]]
 name = "tls-helpers"
 version = "0.2.0"
-source = "git+https://github.com/wavey-ai/tls-helpers.git#83ed1898513321379b19f6311045164323212b31"
+source = "git+https://github.com/wavey-ai/tls-helpers.git#87aac4e12378861e37a583520dfa55f925aff840"
 dependencies = [
  "base64 0.22.1",
- "rustls 0.23.38",
+ "rustls 0.23.42",
  "rustls-pemfile",
  "rustls-pki-types",
  "tokio",
@@ -3889,9 +3790,9 @@ dependencies = [
 
 [[package]]
 name = "tokio"
-version = "1.51.1"
+version = "1.52.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f66bf9585cda4b724d3e78ab34b73fb2bbaba9011b9bfdf69dc836382ea13b8c"
+checksum = "317fafbbe3f02fc663dad00ea6186197de963cd4190e86a26d8d0fae095539af"
 dependencies = [
  "bytes",
  "libc",
@@ -3931,7 +3832,7 @@ version = "0.26.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1729aa945f29d91ba541258c8df89027d5792d85a8841fb65e8bf0f4ede4ef61"
 dependencies = [
- "rustls 0.23.38",
+ "rustls 0.23.42",
  "tokio",
 ]
 
@@ -3954,7 +3855,7 @@ checksum = "489a59b6730eda1b0171fcfda8b121f4bee2b35cba8645ca35c5f7ba3eb736c1"
 dependencies = [
  "futures-util",
  "log",
- "rustls 0.23.38",
+ "rustls 0.23.42",
  "rustls-pki-types",
  "tokio",
  "tokio-rustls",
@@ -4143,7 +4044,7 @@ dependencies = [
  "httparse",
  "log",
  "rand 0.9.4",
- "rustls 0.23.38",
+ "rustls 0.23.42",
  "rustls-pki-types",
  "sha1",
  "thiserror 2.0.18",
@@ -4228,7 +4129,7 @@ dependencies = [
  "hyper-util",
  "playlists",
  "reqwest",
- "rustls 0.23.38",
+ "rustls 0.23.42",
  "rustls-pemfile",
  "serde",
  "serde_json",
@@ -4485,7 +4386,7 @@ dependencies = [
  "playlists",
  "quinn",
  "regex",
- "rustls 0.23.38",
+ "rustls 0.23.42",
  "rustls-pemfile",
  "serde",
  "serde_json",
@@ -4537,14 +4438,14 @@ version = "0.26.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "521bc38abb08001b01866da9f51eb7c5d647a19260e00054a8c7fd5f9e57f7a9"
 dependencies = [
- "webpki-roots 1.0.6",
+ "webpki-roots 1.0.8",
 ]
 
 [[package]]
 name = "webpki-roots"
-version = "1.0.6"
+version = "1.0.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "22cfaf3c063993ff62e73cb4311efde4db1efb31ab78a3e5c457939ad5cc0bed"
+checksum = "bf85cb06032201fa7c6f829d7db5a7e5aa45bcc0655327713065f6f0576731bf"
 dependencies = [
  "rustls-pki-types",
 ]

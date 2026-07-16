@@ -50,7 +50,7 @@ audio-decoder = ["dep:av-api", "dep:soundkit", "dep:soundkit-decoder"]
 anyhow = "1.0"
 asr-onnx = { path = "../asr-onnx", optional = true }
 async-trait = "0.1"
-av-api = { git = "https://github.com/wavey-ai/av-api.git", rev = "47357284d18f9962b017d7e345fdaf886b922b63", optional = true }
+av-api = { git = "https://github.com/wavey-ai/av-api.git", rev = "1434e95a84781482a67cb3759d79b1bb166a3947", optional = true }
 bytes = "1"
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 clap = { version = "4.5", features = ["derive", "env"] }
@@ -90,3 +90,6 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "json"]
 upload-response = { git = "https://github.com/wavey-ai/web-services.git", package = "upload-response" }
 url = "2.5"
 web-service = { git = "https://github.com/wavey-ai/web-services.git", package = "web-service" }
+
+[patch."https://github.com/wavey-ai/playlists.git"]
+playlists = { git = "https://codeberg.org/wavey-ai/playlists.git", rev = "a069d9ec7bd97f1b96a6b435541be8304fc680a4" }
