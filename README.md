@@ -39,11 +39,11 @@ The runtime has three roles:
    runs Cohere inference through ONNX Runtime or MLX, and writes the final
    Deepgram-compatible response back to the owning ingress process.
 
-The split keeps model libraries out of ingress, keeps audio codec work off the
-GPU worker, and makes worker throughput visible at the cache/stage boundary.
+This design keeps model libraries out of ingress. It keeps audio codec work off
+the GPU worker. It also shows worker throughput at the cache/stage boundary.
 The handoff is
-[`upload-response`](https://github.com/wavey-ai/web-services/tree/main/upload-response);
-there is no Redis sidecar or external queue.
+[`upload-response`](https://github.com/wavey-ai/web-services/tree/main/upload-response).
+There is no Redis sidecar or external queue.
 
 See [ASR Capability Inventory](docs/asr-capability-inventory.md) for the
 current Cohere and Parakeet backend capability matrix.
@@ -72,7 +72,7 @@ Parakeet ONNX/TDT build:
 cargo build --no-default-features --features parakeet-backend,audio-decoder
 ```
 
-Backends can be compiled together; Cohere ONNX remains the default runtime
+Backends can be compiled together. Cohere ONNX remains the default runtime
 unless `ASR_MODEL_PROVIDER` or `ASR_COHERE_BACKEND` selects another path.
 
 ## Model Artifacts
@@ -156,7 +156,7 @@ Core service:
 - `ASR_API_ROLE`: `ingress`, `decoder`, or `worker`
 - `PORT`: TLS port, default `8443`
 - `ENABLE_H3`: enable HTTP/3 in addition to HTTP/2
-- `TLS_CERT_PATH` / `TLS_KEY_PATH`: optional PEM paths; if omitted the
+- `TLS_CERT_PATH` / `TLS_KEY_PATH`: optional PEM paths. If omitted the
   workspace default local TLS material is used
 - `ASR_MODEL_DIR`: model directory, required for `worker`
 - `ASR_DEVICE_IDS`: comma-separated GPU ids, default `0`
@@ -176,14 +176,14 @@ Audio/chunking:
 
 Backend selection and ONNX Runtime:
 
-- `ASR_MODEL_PROVIDER`: `auto`, `cohere`, or `parakeet`; default `auto`
+- `ASR_MODEL_PROVIDER`: `auto`, `cohere`, or `parakeet`. Default `auto`
 - `ASR_COHERE_BACKEND`: `onnx` or `mlx`, default `onnx`
 - `ASR_ONNX_RUNTIME_LIB` / `ORT_DYLIB_PATH`: explicit ONNX Runtime dynamic
   library path
 - `ASR_COHERE_FORCE_CPU`: force ONNX CPU EP for compare/debug runs
 - `ASR_COHERE_TIMINGS`: emit per-window Cohere timing lines to stderr
 - `ASR_COHERE_INTRA_THREADS`: ONNX intra-op threads. On macOS, unset lets ONNX
-  Runtime choose its default pool; on other platforms unset preserves the
+  Runtime choose its default pool. On other platforms unset preserves the
   previous single-thread behavior. Set `0` to skip explicit thread setting.
 - `ASR_COHERE_PARALLEL_EXECUTION`: enable ONNX Runtime graph-level parallel
   execution
@@ -198,7 +198,7 @@ Parakeet:
 - `ASR_PARAKEET_N_FFT`: default `512`
 - `ASR_PARAKEET_WIN_LENGTH`: default `400`
 - `ASR_PARAKEET_HOP_LENGTH`: default `160`
-- `ASR_PARAKEET_PAD_TO`: default `0`; set `16` to mimic NeMo padding
+- `ASR_PARAKEET_PAD_TO`: default `0`. Set `16` to mimic NeMo padding
 
 Cohere word timestamps default to a generated-token frequency estimate. They
 are monotonic and suitable for Deepgram-compatible `words` output, but they are
@@ -216,12 +216,12 @@ side-channel:
 - `ASR_CTC_ALIGN_TRT_MIN_DURATION_S`, `ASR_CTC_ALIGN_TRT_OPT_DURATION_S`,
   `ASR_CTC_ALIGN_TRT_MAX_DURATION_S`: TensorRT dynamic-shape profile window
 - `ASR_CTC_ALIGN_TRT_WORKSPACE_BYTES`: default `8 GiB`
-- `ASR_CTC_ALIGN_TRT_FP16`: default disabled; enable only after validating
+- `ASR_CTC_ALIGN_TRT_FP16`: default disabled. Enable only after validating
   finite logits for the specific CTC ONNX graph/runtime
 - `ASR_CTC_ALIGN_TIMINGS`: emit CTC aligner timing/debug lines to stderr
 
 The local macOS validation path uses ONNX Runtime CPU. TensorRT is not a macOS
-path; build and benchmark TensorRT engines on a supported NVIDIA/CUDA host. The
+path. Build and benchmark TensorRT engines on a supported NVIDIA/CUDA host. The
 NVIDIA TensorRT support matrix lists Linux, Windows, SBSA, and JetPack targets,
 and no macOS target:
 https://docs.nvidia.com/deeplearning/tensorrt/latest/getting-started/support-matrix.html
@@ -415,14 +415,14 @@ Buffered responses use the Deepgram JSON shape:
 
 Streaming is also supported on `/v1/listen`:
 
-- request-body streaming returns newline-delimited JSON;
+- request-body streaming returns newline-delimited JSON
 - WebSocket clients send binary audio frames and may send JSON control messages
-  with `type` set to `KeepAlive`, `Finalize`, or `CloseStream`;
+  with `type` set to `KeepAlive`, `Finalize`, or `CloseStream`
 - `interim_results=true` enables interim `Results` events.
 
 Correlation IDs use Wavey's snowflake generator and are propagated internally
 in `x-wavey-request-id`. If the client supplies a numeric `x-request-id`,
-`asr-api` reuses it; otherwise ingress mints one.
+`asr-api` reuses it. Otherwise ingress mints one.
 
 ## TensorRT Cache Workflow
 
@@ -468,11 +468,11 @@ rows.
 These numbers are useful because they answer different operational questions:
 
 - single-session RTFx tells you whether a backend is viable for one request
-  stream;
+  stream
 - multi-session RTFx tells you whether a GPU can turn memory into useful
-  throughput;
+  throughput
 - response mean tells you whether the service topology is hiding or exposing
-  model latency;
+  model latency
 - VRAM tells you whether the topology is a production candidate or just a
   benchmark artifact.
 
@@ -536,16 +536,17 @@ Local service-stack MLX results:
 | Mac MLX `asr-api` | `2` workers | `2` x 30s WAV, c=`2` | `1.66` | `0.94` | `40.02s` | Two model copies fought for the same MLX/Metal resources. |
 
 The slow MLX numbers are cold-start and first-request Metal compilation
-effects. For this repo, MLX is the Apple Silicon development backend; Ada
+effects. For this repo, MLX is the Apple Silicon development backend. Ada
 TensorRT is the throughput path.
 
 ## Cohere Ada Benchmarks
 
 These are point-in-time Cohere Transcribe measurements from the Linode NVIDIA
 RTX 4000 Ada Generation host (`20475 MiB` VRAM) on `2026-05-14`. The
-`asr-api` rows used release binaries, the split `ingress` / `decoder` /
-`worker` upload-response path, the Cohere ONNX bundle synced from the bucket,
-and Harvard `*.s16le` PCM files submitted over HTTP/2 after warmup.
+`asr-api` rows used release binaries and the split upload-response path. This
+path has `ingress`, `decoder`, and `worker` stages. The tests used the Cohere
+ONNX bundle from the bucket. They submitted Harvard `*.s16le` PCM files over
+HTTP/2 after warmup.
 
 | Runtime | Topology | Measured load | OK / fail | Stage RTFx | Whole RTFx | Mean TTFB | Response mean | GPU VRAM | Notes |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |
@@ -568,9 +569,9 @@ Capacity observations from the same host:
 
 Memory efficiency matters more than the single-session footprint. Full
 TensorRT used about `~5.1 GiB` for one hot 35s session and `18.2-18.7 GiB` for
-four total sessions, which is the tested path that kept the `20 GiB` Ada card
-below capacity while increasing useful concurrency. Plain ONNX CUDA EP filled
-the card at two sessions and failed at the four-session topology.
+four total sessions. This configuration kept the `20 GiB` Ada card below
+capacity and increased useful concurrency. Plain ONNX CUDA EP filled the card
+at two sessions. It failed with the four-session topology.
 
 The practical deployment conclusion from these measurements is that full
 TensorRT is both faster and more memory efficient on Ada. It is what makes four
@@ -579,10 +580,14 @@ total Cohere ONNX sessions fit on the `20 GiB` RTX 4000 Ada host.
 ## Example Workload
 
 The [Bitneedle scratch tutorial sweep](examples/bitneedle-scratch-tutorial-sweep/README.md)
-is the worked example in this repo. It resolves public DJ scratching tutorials
-through `av-ingest`, segments the audio to mono `16 kHz` WAV chunks, submits
-those chunks to `/v1/listen`, and stores non-verbatim research artifacts:
-technique tags, timestamped summaries, aggregate term counts, and UI notes.
+is the worked example in this repo. It does these tasks:
+
+- resolves public DJ scratching tutorials through `av-ingest`
+- segments the audio into mono `16 kHz` WAV chunks
+- submits the chunks to `/v1/listen`
+- stores technique tags, timestamped summaries, term counts, and UI notes.
+
+The stored research artifacts do not contain verbatim transcripts.
 
 Measured portion from the `2026-05-17` run:
 

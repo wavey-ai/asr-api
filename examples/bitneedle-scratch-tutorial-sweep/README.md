@@ -1,8 +1,8 @@
 # Example use case: Bitneedle scratch tutorial sweep
 
-This example documents a real ASR workload used by the Bitneedle player work:
-transcribing public DJ scratching tutorial videos into ASR-derived notes so the
-product team can design a scratch-focused sub-UI.
+This example documents an ASR workload from the Bitneedle player work. It
+transcribes public DJ scratching tutorials into ASR-derived notes. The product
+team uses the notes to design a scratch-focused UI.
 
 The goal is not to publish bulk verbatim transcripts. The downstream artifact is
 a compact research index: detected techniques, high-signal terms, timestamped
@@ -106,7 +106,7 @@ failure handling around media resolution.
 
 - Keep source media retrieval in `av-ingest`, not direct `yt-dlp`, when testing
   the production media path.
-- Prefer `ANDROID_VR` YouTube resolution with `visitorData`; the older Android
+- Prefer `ANDROID_VR` YouTube resolution with `visitorData`. The older Android
   resolver can produce signed URLs that fail later byte ranges.
 - Store summaries and technique maps for third-party videos rather than full
   verbatim transcripts.
