@@ -4,15 +4,6 @@ version = 4
 
 [[package]]
 name = "access-unit"
-version = "0.1.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "089654a0182818690a0efe33f1c8fde8d0cee83a1dd043b6d358525857d1b169"
-dependencies = [
- "bytes",
-]
-
-[[package]]
-name = "access-unit"
 version = "0.1.3"
 source = "git+https://github.com/wavey-ai/access-unit.git#80decbb8c7ae0de31755c80c92958665eea28409"
 dependencies = [
@@ -35,6 +26,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "320119579fcad9c21884f5c4861d16174d0e06250625266f50fe6898340abefa"
 
 [[package]]
+name = "aead"
+version = "0.5.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d122413f284cf2d62fb1b7db97e02edb8cda96d769b16e443a4f6195e35662b0"
+dependencies = [
+ "crypto-common",
+ "generic-array",
+]
+
+[[package]]
 name = "ahash"
 version = "0.8.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -55,6 +56,25 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ddd31a130427c27518df266943a5308ed92d4b226cc639f5a8f1002816174301"
 dependencies = [
  "memchr",
+]
+
+[[package]]
+name = "aifc"
+version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "00259ade1408f212e06fbf52b31677526eb81d91ff3f71d1ac8c7fa6f4eaf31f"
+dependencies = [
+ "audio-codec-algorithms",
+]
+
+[[package]]
+name = "alac"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "498a34d3cad5f3b23cc217ab489424ebcfffed186e30ad5ac02624e50df2c2b8"
+dependencies = [
+ "caf",
+ "mp4parse",
 ]
 
 [[package]]
@@ -227,6 +247,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "audio-codec-algorithms"
+version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3befb328a44333ff731148d7f4acb322e57748d48fee4e424ae1fa786d765501"
+
+[[package]]
 name = "autocfg"
 version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -235,46 +261,15 @@ checksum = "c08606f8c3cbf4ce6ec8e28fb0014a2c086708fe954eaa885384a6165172e7e8"
 [[package]]
 name = "av-api"
 version = "0.1.0"
-source = "git+https://github.com/wavey-ai/av-api.git?rev=8179d0b8001e10aabc0f730970f7d1a05499ace2#8179d0b8001e10aabc0f730970f7d1a05499ace2"
+source = "git+https://github.com/wavey-ai/av-api.git?branch=main#0c3ab4e063e924fef40791830cf313bba32a694f"
 dependencies = [
  "anyhow",
  "bytes",
  "http",
  "soundkit",
  "soundkit-decoder",
+ "talkback-media",
  "upload-response",
-]
-
-[[package]]
-name = "av-bitstream"
-version = "0.2.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e539d00bcd8aac3be7f171b32cd0f10de8a279d2824dda582b3fa54d708c8028"
-dependencies = [
- "num-traits",
-]
-
-[[package]]
-name = "av-codec"
-version = "0.3.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "83a5963a689eb6f5838226f59903afa45bccfcf62bc579ef6c464dafac962ad5"
-dependencies = [
- "av-data",
- "num-rational",
-]
-
-[[package]]
-name = "av-data"
-version = "0.4.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fca67ba5d317924c02180c576157afd54babe48a76ebc66ce6d34bb8ba08308e"
-dependencies = [
- "byte-slice-cast",
- "bytes",
- "num-derive",
- "num-rational",
- "num-traits",
 ]
 
 [[package]]
@@ -353,29 +348,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "bindgen"
-version = "0.65.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cfdf7b466f9a4903edc73f95d6d2bcd5baf8ae620638762244d3f60143643cc5"
-dependencies = [
- "bitflags 1.3.2",
- "cexpr",
- "clang-sys",
- "lazy_static",
- "lazycell",
- "log",
- "peeking_take_while",
- "prettyplease",
- "proc-macro2",
- "quote",
- "regex",
- "rustc-hash 1.1.0",
- "shlex",
- "syn 2.0.117",
- "which",
-]
-
-[[package]]
 name = "bit_field"
 version = "0.10.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -392,6 +364,15 @@ name = "bitflags"
 version = "2.11.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c4512299f36f043ab09a583e57bceb5a5aab7a73db1805848e8fef3c9e8c78b3"
+
+[[package]]
+name = "bitreader"
+version = "0.3.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "886559b1e163d56c765bc3a985febb4eee8009f625244511d8ee3c432e08c066"
+dependencies = [
+ "cfg-if",
+]
 
 [[package]]
 name = "block-buffer"
@@ -450,6 +431,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "caf"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8fb1715abe8ffd1caeca4e30b9d803ecb75698bef0e59d207d4b0f16757744e7"
+dependencies = [
+ "byteorder",
+]
+
+[[package]]
 name = "castaway"
 version = "0.2.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -471,15 +461,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "cexpr"
-version = "0.6.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6fac387a98bb7c37292057cffc56d62ecb629900026402633ae9160df93a8766"
-dependencies = [
- "nom",
-]
-
-[[package]]
 name = "cfg-if"
 version = "1.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -490,6 +471,41 @@ name = "cfg_aliases"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "613afe47fcd5fac7ccf1db93babcb082c5994d996f20b8b159f2ad1658eb5724"
+
+[[package]]
+name = "chacha20"
+version = "0.9.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c3613f74bd2eac03dad61bd53dbe620703d4371614fe0bc3b9f04dd36fe4e818"
+dependencies = [
+ "cfg-if",
+ "cipher",
+ "cpufeatures 0.2.17",
+]
+
+[[package]]
+name = "chacha20"
+version = "0.10.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d524456ba66e72eb8b115ff89e01e497f8e6d11d78b70b1aa13c0fbd97540a81"
+dependencies = [
+ "cfg-if",
+ "cpufeatures 0.3.0",
+ "rand_core 0.10.1",
+]
+
+[[package]]
+name = "chacha20poly1305"
+version = "0.10.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "10cd79432192d1c0f4e1a0fef9527696cc039165d729fb41b3f4f4f354c2dc35"
+dependencies = [
+ "aead",
+ "chacha20 0.9.1",
+ "cipher",
+ "poly1305",
+ "zeroize",
+]
 
 [[package]]
 name = "chrono"
@@ -505,14 +521,14 @@ dependencies = [
 ]
 
 [[package]]
-name = "clang-sys"
-version = "1.8.1"
+name = "cipher"
+version = "0.4.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0b023947811758c97c59bf9d1c188fd619ad4718dcaa767947df1cadb14f39f4"
+checksum = "773f3b9af64447d2ce9850330c473515014aa235e6a783b02db81ff39e4a3dad"
 dependencies = [
- "glob",
- "libc",
- "libloading 0.8.9",
+ "crypto-common",
+ "inout",
+ "zeroize",
 ]
 
 [[package]]
@@ -623,6 +639,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "compcol"
+version = "0.6.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "28b37ce533aa0fddc1e6820e331968ba72aa48b5c8bbb2bebdc03d48b6ed0f16"
+
+[[package]]
 name = "core-foundation"
 version = "0.9.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -653,6 +675,15 @@ name = "cpufeatures"
 version = "0.2.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "59ed5838eebb26a2bb2e58f6d5b5316989ae9d08bab10e0e6d103e656d1b0280"
+dependencies = [
+ "libc",
+]
+
+[[package]]
+name = "cpufeatures"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8b2a41393f66f16b0823bb79094d54ac5fbd34ab292ddafb9a0456ac9f87d201"
 dependencies = [
  "libc",
 ]
@@ -856,6 +887,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1aaf95b3e5c8f23aa320147307562d361db0ae0d51242340f558153b4eb2439b"
 
 [[package]]
+name = "downcast-rs"
+version = "2.0.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "117240f60069e65410b3ae1bb213295bd828f707b5bec6596a1afc8793ce0cbc"
+
+[[package]]
 name = "dunce"
 version = "1.0.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -922,12 +959,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "error-chain"
-version = "0.10.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d9435d864e017c3c6afeac1654189b06cdb491cf2ff73dbf0d73b0f292f42ff8"
-
-[[package]]
 name = "esaxx-rs"
 version = "0.1.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -946,6 +977,56 @@ dependencies = [
  "rayon-core",
  "smallvec",
  "zune-inflate",
+]
+
+[[package]]
+name = "ezk"
+version = "0.1.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "730d4112a2d6092fd13ad9376c3f45b1e88be35b3d260bda9e320fa95a4433ed"
+dependencies = [
+ "downcast-rs",
+ "parking_lot",
+ "reusable-box",
+ "slotmap",
+ "tokio",
+]
+
+[[package]]
+name = "ezk-audio"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3e9290c43fb0b524a7191b3bc326bd4252bb1e080e27f4667641ad91bc845471"
+dependencies = [
+ "bitflags 2.11.1",
+ "byte-slice-cast",
+ "ezk",
+]
+
+[[package]]
+name = "ezk-g722"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b255b268bb31835375df113a7bd162474f4facd49027861034962e5f90a62168"
+dependencies = [
+ "bytes",
+ "ezk",
+ "ezk-audio",
+ "ezk-rtp",
+]
+
+[[package]]
+name = "ezk-rtp"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5ced946b828ae53834de5e95719bcfc5403c58e0f6cb066fe116010dd968ab63"
+dependencies = [
+ "bytes",
+ "ezk",
+ "rand 0.10.2",
+ "rtcp-types",
+ "rtp-types",
+ "time",
 ]
 
 [[package]]
@@ -1055,9 +1136,9 @@ dependencies = [
 
 [[package]]
 name = "frame-header"
-version = "0.2.0"
+version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5796530ca77b8fb39b6159e47326d46e447625829617665873a6f93e40a49b40"
+checksum = "7cc04ce8cfeb0860bb501c30c1fd9d1c942a90e2244f5a98ab18d5a8d8b1b2c5"
 dependencies = [
  "serde",
 ]
@@ -1163,6 +1244,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "g729-sys"
+version = "0.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7c0115766e9b2dcbc585946d207299fe2fce9bf0b8d4ba0d3592c6e0f66fe116"
+dependencies = [
+ "anyhow",
+]
+
+[[package]]
 name = "gen-id"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1227,6 +1317,7 @@ dependencies = [
  "cfg-if",
  "libc",
  "r-efi 6.0.0",
+ "rand_core 0.10.1",
  "wasip2",
  "wasip3",
 ]
@@ -1246,12 +1337,6 @@ name = "gimli"
 version = "0.32.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e629b9b98ef3dd8afe6ca2bd0f89306cec16d43d907889945bc5d6687f2f13c7"
-
-[[package]]
-name = "glob"
-version = "0.3.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0cc23270f6e1808e30a928bdc84dea0b9b4136a8bc82338574f23baf47bbd280"
 
 [[package]]
 name = "gpu-worker"
@@ -1283,6 +1368,16 @@ dependencies = [
  "tokio",
  "tracing",
  "upload-response",
+]
+
+[[package]]
+name = "gsm-sys"
+version = "0.0.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c1563848f92f081879d3d4b9d18f01d45b9d207fcd64774d5687a8e8df9148d4"
+dependencies = [
+ "cc",
+ "libc",
 ]
 
 [[package]]
@@ -1424,15 +1519,6 @@ name = "hmac-sha256"
 version = "1.1.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ec9d92d097f4749b64e8cc33d924d9f40a2d4eb91402b458014b781f5733d60f"
-
-[[package]]
-name = "home"
-version = "0.5.12"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cc627f471c528ff0c4a49e1d5e60450c8f6461dd6d10ba9dcd3a61d3dff7728d"
-dependencies = [
- "windows-sys 0.61.2",
-]
 
 [[package]]
 name = "http"
@@ -1744,6 +1830,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "inout"
+version = "0.1.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "879f10e63c20629ecabbb64a8010319738c66a5cd0c29b02d63d272b03751d01"
+dependencies = [
+ "generic-array",
+]
+
+[[package]]
 name = "ipnet"
 version = "2.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1891,12 +1986,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bbd2bcb4c963f2ddae06a2efc7e9f3591312473c50c6685e1f298068316e66fe"
 
 [[package]]
-name = "lazycell"
-version = "1.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "830d08ce1d1d941e6b30645f1a0eb5643013d835ce3779a5fc208261dbe10f55"
-
-[[package]]
 name = "leb128fmt"
 version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1909,6 +1998,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7a79a3332a6609480d7d0c9eab957bca6b455b91bb84e66d19f5ff66294b85b8"
 
 [[package]]
+name = "lewton"
+version = "0.10.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "777b48df9aaab155475a83a7df3070395ea1ac6902f5cd062b8f2b028075c030"
+dependencies = [
+ "byteorder",
+ "ogg",
+ "tinyvec",
+]
+
+[[package]]
 name = "libc"
 version = "0.2.185"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1917,20 +2017,11 @@ checksum = "52ff2c0fe9bc6cb6b14a0592c2ff4fa9ceb83eea9db979b0487cd054946a2b8f"
 [[package]]
 name = "libflac-sys"
 version = "0.3.4"
-source = "git+https://github.com/mgeier/libflac-sys.git#1feb6450c4e0dbc6c6dcaa9a71fac5200c0ffbaf"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6fc5cbb957a914952ee9b8667e82b984c6dc280087df01497fc5b4776d303582"
 dependencies = [
  "cmake",
  "libc",
-]
-
-[[package]]
-name = "libloading"
-version = "0.8.9"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d7c4b02199fee7c5d21a5ae7d8cfa79a6ef5bb2fc834d6e9058e89c825efdc55"
-dependencies = [
- "cfg-if",
- "windows-link",
 ]
 
 [[package]]
@@ -1944,21 +2035,13 @@ dependencies = [
 ]
 
 [[package]]
-name = "libopus"
-version = "0.1.0"
-source = "git+https://github.com/wavey-ai/opus-rs#ef9032bb1478c6788cc2930e38133802bc6eda98"
-dependencies = [
- "av-bitstream",
- "av-codec",
- "av-data",
- "opus-sys",
-]
-
-[[package]]
-name = "linux-raw-sys"
-version = "0.4.15"
+name = "libopus-rs"
+version = "0.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d26c52dbd32dccf2d10cac7725f8eae5296885fb5703b261f7d0a0739ec807ab"
+checksum = "a634b0aceefbc10a498a403c596eba9f716e0bab602439035584e297417684d5"
+dependencies = [
+ "wide",
+]
 
 [[package]]
 name = "linux-raw-sys"
@@ -2036,13 +2119,12 @@ dependencies = [
 
 [[package]]
 name = "mel_spec"
-version = "0.4.0"
+version = "0.4.1"
+source = "git+https://github.com/wavey-ai/mel-spec.git?branch=main#ee5532033431a42955cf38bc1b246c5b49e5dab0"
 dependencies = [
  "cc",
  "image",
  "ndarray 0.16.1",
- "ndarray-npy",
- "num",
  "rustfft",
 ]
 
@@ -2071,17 +2153,6 @@ dependencies = [
  "tls-helpers 0.1.6",
  "tracing",
  "tracing-subscriber",
-]
-
-[[package]]
-name = "metadeps"
-version = "1.1.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "73b122901b3a675fac8cecf68dcb2f0d3036193bc861d1ac0e1c337f7d5254c2"
-dependencies = [
- "error-chain",
- "pkg-config",
- "toml",
 ]
 
 [[package]]
@@ -2157,6 +2228,18 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror 1.0.69",
+]
+
+[[package]]
+name = "mp4parse"
+version = "0.10.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7316728464443fe5793a805dde3257864e9690cf46374daff3ce93de1df2f254"
+dependencies = [
+ "bitreader",
+ "byteorder",
+ "log",
+ "num-traits",
 ]
 
 [[package]]
@@ -2245,20 +2328,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "num"
-version = "0.4.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "35bd024e8b2ff75562e5f34e7f4905839deb4b22955ef5e73d2fea1b9813cb23"
-dependencies = [
- "num-bigint",
- "num-complex",
- "num-integer",
- "num-iter",
- "num-rational",
- "num-traits",
-]
-
-[[package]]
 name = "num-bigint"
 version = "0.4.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2284,33 +2353,11 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "521739c6d2bac4aa25192232afe6841231376b2b26d4d9fae5ecf8ca5772e441"
 
 [[package]]
-name = "num-derive"
-version = "0.4.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ed3955f1a9c7c0c15e092f9c887db08b1fc683305fdf6eb6684f22555355e202"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.117",
-]
-
-[[package]]
 name = "num-integer"
 version = "0.1.46"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7969661fd2958a5cb096e56c8e1ad0444ac2bbcd0061bd28660485a44879858f"
 dependencies = [
- "num-traits",
-]
-
-[[package]]
-name = "num-iter"
-version = "0.1.45"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1429034a0490724d0075ebb2bc9e875d6503c3cf69e235a8941aa757d83ef5bf"
-dependencies = [
- "autocfg",
- "num-integer",
  "num-traits",
 ]
 
@@ -2342,6 +2389,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ff76201f031d8863c38aa7f905eca4f53abbfa15f609db4277d44cd8938f33fe"
 dependencies = [
  "memchr",
+]
+
+[[package]]
+name = "ogg"
+version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6951b4e8bf21c8193da321bcce9c9dd2e13c858fe078bf9054a288b419ae5d6e"
+dependencies = [
+ "byteorder",
 ]
 
 [[package]]
@@ -2377,6 +2433,12 @@ dependencies = [
  "cc",
  "pkg-config",
 ]
+
+[[package]]
+name = "opaque-debug"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c08d65885ee38876c4f86fa503fb49d7b507c2b62552df7c70b2fce627e06381"
 
 [[package]]
 name = "openssl"
@@ -2423,20 +2485,11 @@ dependencies = [
 ]
 
 [[package]]
-name = "opus-sys"
-version = "0.1.0"
-source = "git+https://github.com/wavey-ai/opus-rs#ef9032bb1478c6788cc2930e38133802bc6eda98"
-dependencies = [
- "bindgen",
- "metadeps",
-]
-
-[[package]]
 name = "ort"
 version = "2.0.0-rc.12"
 source = "git+https://github.com/pykeio/ort.git?rev=8724e89ff005ebef4339d7280ff592837404a98d#8724e89ff005ebef4339d7280ff592837404a98d"
 dependencies = [
- "libloading 0.9.0",
+ "libloading",
  "ndarray 0.17.2",
  "ort-sys",
  "smallvec",
@@ -2452,6 +2505,54 @@ dependencies = [
  "hmac-sha256",
  "lzma-rust2",
  "ureq",
+]
+
+[[package]]
+name = "oxideav-ac3"
+version = "0.0.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2bcbb5c1168388942ce5cc2a7ede53dbb82c15df01e8e07cce6e6da41e2b96ac"
+dependencies = [
+ "oxideav-core",
+]
+
+[[package]]
+name = "oxideav-core"
+version = "0.1.34"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5a68d9a74d6d0a7373589eca0c0bb8ab380c46fd1d7fc807e696d716cdad078c"
+dependencies = [
+ "bytemuck",
+ "serde_json",
+ "thiserror 2.0.18",
+]
+
+[[package]]
+name = "oxideav-flac"
+version = "0.0.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4d172c04c43b4c3d851a1a56da85a76aaa37eaccc73f20868916cb320224b690"
+dependencies = [
+ "oxideav-core",
+ "oxideav-id3",
+]
+
+[[package]]
+name = "oxideav-id3"
+version = "0.0.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b4f495efcedb7db3d0f5d9e8cfa0ff23b36a608d0abfc060029b1719ec76c06a"
+dependencies = [
+ "compcol",
+ "oxideav-core",
+]
+
+[[package]]
+name = "oxideav-speex"
+version = "0.0.8"
+source = "git+https://github.com/OxideAV/oxideav-speex.git#cdc4d2d515c6b2c66ed894caf6c39131dc7a309e"
+dependencies = [
+ "oxideav-core",
 ]
 
 [[package]]
@@ -2482,12 +2583,6 @@ name = "paste"
 version = "1.0.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "57c0d7b74b563b49d38dae00a0c37d4d6de9b432382b2892f0574ddcae73fd0a"
-
-[[package]]
-name = "peeking_take_while"
-version = "0.1.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "19b17cddbe7ec3f8bc800887bab5e717348c95ea2ca0b1bf0837fb964dc67099"
 
 [[package]]
 name = "pem-rfc7468"
@@ -2564,7 +2659,7 @@ name = "playlists"
 version = "0.1.3"
 source = "git+https://github.com/wavey-ai/playlists.git?rev=885ffe5a29ed89a3946179cc4dc2c73399665310#885ffe5a29ed89a3946179cc4dc2c73399665310"
 dependencies = [
- "access-unit 0.1.3",
+ "access-unit",
  "bytes",
  "chrono",
  "flate2",
@@ -2586,6 +2681,17 @@ dependencies = [
  "fdeflate",
  "flate2",
  "miniz_oxide",
+]
+
+[[package]]
+name = "poly1305"
+version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8159bd90725d2df49889a078b54f4f79e87f1f8a8444194cdca81d38f5393abf"
+dependencies = [
+ "cpufeatures 0.2.17",
+ "opaque-debug",
+ "universal-hash",
 ]
 
 [[package]]
@@ -2724,7 +2830,7 @@ dependencies = [
  "pin-project-lite",
  "quinn-proto",
  "quinn-udp",
- "rustc-hash 2.1.2",
+ "rustc-hash",
  "rustls 0.23.42",
  "socket2",
  "thiserror 2.0.18",
@@ -2745,7 +2851,7 @@ dependencies = [
  "lru-slab",
  "rand 0.9.4",
  "ring",
- "rustc-hash 2.1.2",
+ "rustc-hash",
  "rustls 0.23.42",
  "rustls-pki-types",
  "slab",
@@ -2835,6 +2941,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "rand"
+version = "0.10.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c7f5fa3a058cd35567ef9bfa5e75732bee0f9e4c55fa90477bef2dfcdbc4be80"
+dependencies = [
+ "chacha20 0.10.1",
+ "getrandom 0.4.2",
+ "rand_core 0.10.1",
+]
+
+[[package]]
 name = "rand_chacha"
 version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2886,6 +3003,12 @@ checksum = "76afc826de14238e6e8c374ddcc1fa19e374fd8dd986b0d2af0d02377261d83c"
 dependencies = [
  "getrandom 0.3.4",
 ]
+
+[[package]]
+name = "rand_core"
+version = "0.10.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "63b8176103e19a2643978565ca18b50549f6101881c443590420e4dc998a3c69"
 
 [[package]]
 name = "rawpointer"
@@ -3063,6 +3186,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "reusable-box"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4b9cb77e81b1d036c2543436df7c5ac85839b1a774a826a9f2607c57094d1a23"
+
+[[package]]
 name = "ring"
 version = "0.17.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3074,6 +3203,25 @@ dependencies = [
  "libc",
  "untrusted",
  "windows-sys 0.52.0",
+]
+
+[[package]]
+name = "rtcp-types"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c081c846edea632bb47332fada9d4ac2fdf54d84beaf547fc947b58489e5f619"
+dependencies = [
+ "thiserror 2.0.18",
+]
+
+[[package]]
+name = "rtp-types"
+version = "0.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7bb90df8268abfe08452ef2dae9e867a54edfdaa71b3127ef47d8b031f77ac73"
+dependencies = [
+ "smallvec",
+ "thiserror 1.0.69",
 ]
 
 [[package]]
@@ -3099,12 +3247,6 @@ name = "rustc-demangle"
 version = "0.1.27"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b50b8869d9fc858ce7266cce0194bd74df58b9d0e3f6df3a9fc8eb470d95c09d"
-
-[[package]]
-name = "rustc-hash"
-version = "1.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "08d43f7aa6b08d49f382cde6a7982047c3426db949b1424bc4b7ec9ae12c6ce2"
 
 [[package]]
 name = "rustc-hash"
@@ -3137,19 +3279,6 @@ dependencies = [
 
 [[package]]
 name = "rustix"
-version = "0.38.44"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fdb5bc1ae2baa591800df16c9ca78619bf65c0488b41b96ccec5d11220d8c154"
-dependencies = [
- "bitflags 2.11.1",
- "errno",
- "libc",
- "linux-raw-sys 0.4.15",
- "windows-sys 0.59.0",
-]
-
-[[package]]
-name = "rustix"
 version = "1.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b6fe4565b9518b83ef4f91bb47ce29620ca828bd32cb7e408f0062e9930ba190"
@@ -3157,7 +3286,7 @@ dependencies = [
  "bitflags 2.11.1",
  "errno",
  "libc",
- "linux-raw-sys 0.12.1",
+ "linux-raw-sys",
  "windows-sys 0.59.0",
 ]
 
@@ -3280,6 +3409,15 @@ name = "ryu"
 version = "1.0.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9774ba4a74de5f7b1c1451ed6cd5285a32eddb5cccb8cc655a4e50009e06477f"
+
+[[package]]
+name = "safe_arch"
+version = "0.7.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "96b02de82ddbe1b636e6170c21be622223aea188ef2e139be0a5b219ec215323"
+dependencies = [
+ "bytemuck",
+]
 
 [[package]]
 name = "same-file"
@@ -3406,7 +3544,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e3bf829a2d51ab4a5ddf1352d8470c140cadc8301b2ae1789db023f01cedd6ba"
 dependencies = [
  "cfg-if",
- "cpufeatures",
+ "cpufeatures 0.2.17",
  "digest",
 ]
 
@@ -3417,7 +3555,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a7507d819769d01a365ab707794a4084392c824f54a7a6a7862f8c3d0892b283"
 dependencies = [
  "cfg-if",
- "cpufeatures",
+ "cpufeatures 0.2.17",
  "digest",
 ]
 
@@ -3475,6 +3613,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0c790de23124f9ab44544d7ac05d60440adc586479ce501c1d6d7da3cd8c9cf5"
 
 [[package]]
+name = "slotmap"
+version = "1.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bdd58c3c93c3d278ca835519292445cb4b0d4dc59ccfdf7ceadaab3f8aeb4038"
+dependencies = [
+ "version_check",
+]
+
+[[package]]
 name = "smallvec"
 version = "1.15.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3503,11 +3650,12 @@ dependencies = [
 
 [[package]]
 name = "soundkit"
-version = "0.12.2"
-source = "git+https://github.com/wavey-ai/soundkit.git?rev=343e02218d9c7beda86807f178f5388e3f8d4887#343e02218d9c7beda86807f178f5388e3f8d4887"
+version = "0.12.3"
+source = "git+https://github.com/wavey-ai/soundkit.git?branch=main#63f23194b6e8548e61a22f2874631a7fb8cd662d"
 dependencies = [
  "byteorder",
  "bytes",
+ "chacha20poly1305",
  "frame-header",
  "rubato",
  "serde",
@@ -3515,10 +3663,10 @@ dependencies = [
 
 [[package]]
 name = "soundkit-aac"
-version = "0.1.0"
-source = "git+https://github.com/wavey-ai/soundkit.git?rev=343e02218d9c7beda86807f178f5388e3f8d4887#343e02218d9c7beda86807f178f5388e3f8d4887"
+version = "0.12.3"
+source = "git+https://github.com/wavey-ai/soundkit.git?branch=main#63f23194b6e8548e61a22f2874631a7fb8cd662d"
 dependencies = [
- "access-unit 0.1.3",
+ "access-unit",
  "fdk-aac",
  "mp4",
  "soundkit",
@@ -3526,40 +3674,137 @@ dependencies = [
 ]
 
 [[package]]
-name = "soundkit-decoder"
-version = "0.1.0"
-source = "git+https://github.com/wavey-ai/soundkit.git?rev=343e02218d9c7beda86807f178f5388e3f8d4887#343e02218d9c7beda86807f178f5388e3f8d4887"
+name = "soundkit-ac3"
+version = "0.12.3"
+source = "git+https://github.com/wavey-ai/soundkit.git?branch=main#63f23194b6e8548e61a22f2874631a7fb8cd662d"
 dependencies = [
- "access-unit 0.1.2",
+ "frame-header",
+ "oxideav-ac3",
+ "oxideav-core",
+ "soundkit",
+]
+
+[[package]]
+name = "soundkit-aiff"
+version = "0.12.3"
+source = "git+https://github.com/wavey-ai/soundkit.git?branch=main#63f23194b6e8548e61a22f2874631a7fb8cd662d"
+dependencies = [
+ "aifc",
+ "frame-header",
+ "soundkit",
+]
+
+[[package]]
+name = "soundkit-alac"
+version = "0.12.3"
+source = "git+https://github.com/wavey-ai/soundkit.git?branch=main#63f23194b6e8548e61a22f2874631a7fb8cd662d"
+dependencies = [
+ "alac",
+ "frame-header",
+ "soundkit",
+]
+
+[[package]]
+name = "soundkit-amr"
+version = "0.12.3"
+source = "git+https://github.com/wavey-ai/soundkit.git?branch=main#63f23194b6e8548e61a22f2874631a7fb8cd662d"
+dependencies = [
+ "pkg-config",
+ "soundkit",
+]
+
+[[package]]
+name = "soundkit-decoder"
+version = "0.12.3"
+source = "git+https://github.com/wavey-ai/soundkit.git?branch=main#63f23194b6e8548e61a22f2874631a7fb8cd662d"
+dependencies = [
+ "access-unit",
  "bytes",
  "frame-header",
  "rtrb",
+ "rubato",
  "soundkit",
  "soundkit-aac",
+ "soundkit-ac3",
+ "soundkit-aiff",
+ "soundkit-alac",
+ "soundkit-amr",
  "soundkit-flac",
+ "soundkit-g711",
+ "soundkit-g722",
+ "soundkit-g726",
+ "soundkit-g729",
+ "soundkit-gsm",
  "soundkit-mp3",
  "soundkit-ogg-opus",
  "soundkit-opus",
+ "soundkit-speex",
+ "soundkit-vorbis",
  "soundkit-webm",
 ]
 
 [[package]]
 name = "soundkit-flac"
-version = "0.1.0"
-source = "git+https://github.com/wavey-ai/soundkit.git?rev=343e02218d9c7beda86807f178f5388e3f8d4887#343e02218d9c7beda86807f178f5388e3f8d4887"
+version = "0.12.3"
+source = "git+https://github.com/wavey-ai/soundkit.git?branch=main#63f23194b6e8548e61a22f2874631a7fb8cd662d"
 dependencies = [
- "access-unit 0.1.2",
+ "access-unit",
  "claxon",
  "libc",
  "libflac-sys",
+ "oxideav-core",
+ "oxideav-flac",
  "soundkit",
  "tracing",
 ]
 
 [[package]]
+name = "soundkit-g711"
+version = "0.12.3"
+source = "git+https://github.com/wavey-ai/soundkit.git?branch=main#63f23194b6e8548e61a22f2874631a7fb8cd662d"
+dependencies = [
+ "soundkit",
+]
+
+[[package]]
+name = "soundkit-g722"
+version = "0.12.3"
+source = "git+https://github.com/wavey-ai/soundkit.git?branch=main#63f23194b6e8548e61a22f2874631a7fb8cd662d"
+dependencies = [
+ "ezk-g722",
+ "soundkit",
+]
+
+[[package]]
+name = "soundkit-g726"
+version = "0.12.3"
+source = "git+https://github.com/wavey-ai/soundkit.git?branch=main#63f23194b6e8548e61a22f2874631a7fb8cd662d"
+dependencies = [
+ "soundkit",
+]
+
+[[package]]
+name = "soundkit-g729"
+version = "0.12.3"
+source = "git+https://github.com/wavey-ai/soundkit.git?branch=main#63f23194b6e8548e61a22f2874631a7fb8cd662d"
+dependencies = [
+ "g729-sys",
+ "soundkit",
+]
+
+[[package]]
+name = "soundkit-gsm"
+version = "0.12.3"
+source = "git+https://github.com/wavey-ai/soundkit.git?branch=main#63f23194b6e8548e61a22f2874631a7fb8cd662d"
+dependencies = [
+ "gsm-sys",
+ "soundkit",
+]
+
+[[package]]
 name = "soundkit-mp3"
-version = "0.1.0"
-source = "git+https://github.com/wavey-ai/soundkit.git?rev=343e02218d9c7beda86807f178f5388e3f8d4887#343e02218d9c7beda86807f178f5388e3f8d4887"
+version = "0.12.3"
+source = "git+https://github.com/wavey-ai/soundkit.git?branch=main#63f23194b6e8548e61a22f2874631a7fb8cd662d"
 dependencies = [
  "nanomp3",
  "soundkit",
@@ -3568,8 +3813,8 @@ dependencies = [
 
 [[package]]
 name = "soundkit-ogg-opus"
-version = "0.0.1"
-source = "git+https://github.com/wavey-ai/soundkit.git?rev=343e02218d9c7beda86807f178f5388e3f8d4887#343e02218d9c7beda86807f178f5388e3f8d4887"
+version = "0.12.3"
+source = "git+https://github.com/wavey-ai/soundkit.git?branch=main#63f23194b6e8548e61a22f2874631a7fb8cd662d"
 dependencies = [
  "frame-header",
  "memchr",
@@ -3580,23 +3825,47 @@ dependencies = [
 
 [[package]]
 name = "soundkit-opus"
-version = "0.0.1"
-source = "git+https://github.com/wavey-ai/soundkit.git?rev=343e02218d9c7beda86807f178f5388e3f8d4887#343e02218d9c7beda86807f178f5388e3f8d4887"
+version = "0.12.3"
+source = "git+https://github.com/wavey-ai/soundkit.git?branch=main#63f23194b6e8548e61a22f2874631a7fb8cd662d"
 dependencies = [
  "frame-header",
- "libopus",
+ "libopus-rs",
  "soundkit",
  "tracing",
 ]
 
 [[package]]
+name = "soundkit-speex"
+version = "0.12.3"
+source = "git+https://github.com/wavey-ai/soundkit.git?branch=main#63f23194b6e8548e61a22f2874631a7fb8cd662d"
+dependencies = [
+ "frame-header",
+ "memchr",
+ "oxideav-core",
+ "oxideav-speex",
+ "soundkit",
+]
+
+[[package]]
+name = "soundkit-vorbis"
+version = "0.12.3"
+source = "git+https://github.com/wavey-ai/soundkit.git?branch=main#63f23194b6e8548e61a22f2874631a7fb8cd662d"
+dependencies = [
+ "frame-header",
+ "lewton",
+ "memchr",
+ "soundkit",
+]
+
+[[package]]
 name = "soundkit-webm"
-version = "0.0.1"
-source = "git+https://github.com/wavey-ai/soundkit.git?rev=343e02218d9c7beda86807f178f5388e3f8d4887#343e02218d9c7beda86807f178f5388e3f8d4887"
+version = "0.12.3"
+source = "git+https://github.com/wavey-ai/soundkit.git?branch=main#63f23194b6e8548e61a22f2874631a7fb8cd662d"
 dependencies = [
  "frame-header",
  "soundkit",
  "soundkit-opus",
+ "soundkit-vorbis",
  "tracing",
 ]
 
@@ -3748,6 +4017,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "talkback-media"
+version = "0.1.1"
+source = "git+https://github.com/wavey-ai/av-api.git?branch=main#0c3ab4e063e924fef40791830cf313bba32a694f"
+dependencies = [
+ "bytes",
+]
+
+[[package]]
 name = "tempfile"
 version = "3.27.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3756,7 +4033,7 @@ dependencies = [
  "fastrand",
  "getrandom 0.4.2",
  "once_cell",
- "rustix 1.1.4",
+ "rustix",
  "windows-sys 0.59.0",
 ]
 
@@ -4062,12 +4339,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "toml"
-version = "0.2.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "736b60249cb25337bc196faa43ee12c705e426f3d55c214d73a4e7be06f92cb4"
-
-[[package]]
 name = "tower"
 version = "0.5.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4271,6 +4542,16 @@ name = "unicode_categories"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39ec24b3121d976906ece63c9daad25b85969647682eee313cb5779fdd69e14e"
+
+[[package]]
+name = "universal-hash"
+version = "0.5.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fc1de2c688dc15305988b563c3854064043356019f97a4b46276fe734c4f07ea"
+dependencies = [
+ "crypto-common",
+ "subtle",
+]
 
 [[package]]
 name = "untrusted"
@@ -4631,15 +4912,13 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a28ac98ddc8b9274cb41bb4d9d4d5c425b6020c50c46f25559911905610b4a88"
 
 [[package]]
-name = "which"
-version = "4.4.2"
+name = "wide"
+version = "0.7.33"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "87ba24419a2078cd2b0f2ede2691b6c66d8e47836da3b6db8265ebad47afbfc7"
+checksum = "0ce5da8ecb62bcd8ec8b7ea19f69a51275e91299be594ea5cc6ef7819e16cd03"
 dependencies = [
- "either",
- "home",
- "once_cell",
- "rustix 0.38.44",
+ "bytemuck",
+ "safe_arch",
 ]
 
 [[package]]

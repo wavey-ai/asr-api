@@ -50,7 +50,7 @@ audio-decoder = ["dep:av-api", "dep:soundkit", "dep:soundkit-decoder"]
 anyhow = "1.0"
 asr-onnx = { path = "../asr-onnx", optional = true }
 async-trait = "0.1"
-av-api = { git = "https://github.com/wavey-ai/av-api.git", rev = "8179d0b8001e10aabc0f730970f7d1a05499ace2", optional = true }
+av-api = { git = "https://github.com/wavey-ai/av-api.git", branch = "main", optional = true }
 bytes = "1"
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 clap = { version = "4.5", features = ["derive", "env"] }
@@ -63,7 +63,7 @@ hyper = { version = "1", features = ["full"] }
 hyper-util = { version = "0.1", features = ["full"] }
 http = "1"
 http-pack = { git = "https://github.com/wavey-ai/http-pack.git", default-features = false }
-mel_spec = { path = "../mel-spec", default-features = false, optional = true }
+mel_spec = { git = "https://github.com/wavey-ai/mel-spec.git", branch = "main", default-features = false, optional = true }
 ndarray = "0.17"
 reqwest = { version = "0.12", features = ["rustls-tls", "http2"] }
 ort = { git = "https://github.com/pykeio/ort.git", rev = "8724e89ff005ebef4339d7280ff592837404a98d", default-features = false, features = [
@@ -80,8 +80,8 @@ rustfft = { version = "6.2", optional = true }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 sha2 = "0.10"
-soundkit = { git = "https://github.com/wavey-ai/soundkit.git", rev = "343e02218d9c7beda86807f178f5388e3f8d4887", package = "soundkit", optional = true }
-soundkit-decoder = { git = "https://github.com/wavey-ai/soundkit.git", rev = "343e02218d9c7beda86807f178f5388e3f8d4887", package = "soundkit-decoder", optional = true }
+soundkit = { git = "https://github.com/wavey-ai/soundkit.git", branch = "main", package = "soundkit", optional = true }
+soundkit-decoder = { git = "https://github.com/wavey-ai/soundkit.git", branch = "main", package = "soundkit-decoder", optional = true }
 tokio = { version = "1.45", features = ["full"] }
 tokio-tungstenite = { version = "0.29", features = ["rustls-tls-webpki-roots"] }
 tokenizers = { version = "0.22.2", default-features = false, features = ["onig"], optional = true }
