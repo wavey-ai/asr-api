@@ -649,7 +649,7 @@ async fn write_stream_error(
 ) -> HandlerResult<()> {
     let mut response = Response::builder().status(handler_response.status);
     if let Some(content_type) = handler_response.content_type {
-        response = response.header("content-type", content_type);
+        response = response.header("content-type", content_type.as_ref());
     }
     if let Some(etag) = handler_response.etag {
         response = response.header("etag", etag.to_string());
