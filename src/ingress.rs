@@ -24,6 +24,8 @@ use web_service::{
     BodyStream, HandlerResponse, HandlerResult, ServerError, StreamWriter, WebSocketHandler,
 };
 
+const WEBSOCKET_RESPONSE_READER_ID: &str = "__asr_websocket_response";
+
 #[derive(Clone)]
 pub struct ListenIngress {
     config: AppConfig,
@@ -399,8 +401,17 @@ impl ListenIngress {
         stream_id: u64,
         mut sink: SplitSink<WebSocketStream<TokioIo<Upgraded>>, Message>,
     ) -> HandlerResult<()> {
+        if !self
+            .service
+            .register_response_reader(stream_id, WEBSOCKET_RESPONSE_READER_ID)
+            .await
+        {
+            return Err(ServerError::Config(
+                "response stream is not available".into(),
+            ));
+        }
         let timeout_duration = Duration::from_millis(self.config.upload_response_timeout_ms);
-        timeout(timeout_duration, async {
+        let result = match timeout(timeout_duration, async {
             let mut poll = interval(Duration::from_millis(
                 self.config.upload_response_watch_poll_ms.max(1),
             ));
@@ -419,6 +430,14 @@ impl ListenIngress {
                             .unwrap_or(false);
                         headers_seen = true;
                         last_slot = 1;
+                        let _ = self
+                            .service
+                            .mark_response_reader_position(
+                                stream_id,
+                                WEBSOCKET_RESPONSE_READER_ID,
+                                1,
+                            )
+                            .await;
                     } else {
                         continue;
                     }
@@ -429,6 +448,7 @@ impl ListenIngress {
                     continue;
                 }
 
+                let mut processed_last = last_slot;
                 for slot_id in (last_slot + 1)..=current_last {
                     match self.service.tail_response(stream_id, slot_id).await {
                         Some(TailSlot::Body(bytes)) if stream_json_lines => {
@@ -463,17 +483,42 @@ impl ListenIngress {
                                 }
                             }
                             let _ = sink.close().await;
+                            let _ = self
+                                .service
+                                .mark_response_reader_position(
+                                    stream_id,
+                                    WEBSOCKET_RESPONSE_READER_ID,
+                                    slot_id,
+                                )
+                                .await;
                             return Ok(());
                         }
-                        _ => {}
+                        _ => break,
                     }
+                    let _ = self
+                        .service
+                        .mark_response_reader_position(
+                            stream_id,
+                            WEBSOCKET_RESPONSE_READER_ID,
+                            slot_id,
+                        )
+                        .await;
+                    processed_last = slot_id;
                 }
 
-                last_slot = current_last;
+                last_slot = processed_last;
             }
         })
         .await
-        .map_err(|_| ServerError::Config("response timeout".into()))?
+        {
+            Ok(result) => result,
+            Err(_) => Err(ServerError::Config("response timeout".into())),
+        };
+        let _ = self
+            .service
+            .unregister_response_reader(stream_id, WEBSOCKET_RESPONSE_READER_ID)
+            .await;
+        result
     }
 
     async fn write_stream_error_response(&self, stream_id: u64, error: &anyhow::Error) {

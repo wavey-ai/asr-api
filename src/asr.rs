@@ -14,6 +14,7 @@ use std::path::Path;
 pub struct WindowTranscription {
     pub text: String,
     pub words: Vec<TimedWord>,
+    pub(crate) stitch_words: Option<Vec<TimedWord>>,
 }
 
 pub struct AsrBackend {

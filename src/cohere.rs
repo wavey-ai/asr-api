@@ -1,8 +1,9 @@
 use crate::asr::WindowTranscription;
+use crate::chunking::TimedWord;
 use crate::cohere_frontend::{CohereFrontend, CoherePreprocessorConfig};
 use crate::config::ASR_SAMPLE_RATE;
 use crate::config::DEFAULT_LANGUAGE;
-use crate::ctc_align::ParakeetCtcAligner;
+use crate::ctc_align::ParakeetCtcTimestampEngine;
 use crate::timestamps::{
     duration_ms_for_samples, estimate_word_timestamps_from_tokens, TokenTextSpan,
 };
@@ -165,7 +166,7 @@ enum CohereProfileTarget {
 pub struct CohereBackend {
     frontend: CohereFrontend,
     decoder: CohereDecoderClient,
-    ctc_aligner: Option<Arc<ParakeetCtcAligner>>,
+    ctc_aligner: Option<Arc<ParakeetCtcTimestampEngine>>,
 }
 
 impl CohereBackend {
@@ -230,7 +231,7 @@ impl CohereBackend {
             decode,
             runtime,
         )?;
-        let ctc_aligner = ParakeetCtcAligner::from_env(device_ids)
+        let ctc_aligner = ParakeetCtcTimestampEngine::from_env(device_ids)
             .context("failed to initialize Parakeet CTC timestamp aligner")?
             .map(Arc::new);
         Ok(Self {
@@ -251,39 +252,63 @@ impl CohereBackend {
 
         if let Some(aligner) = self.ctc_aligner.clone() {
             let text = result.text.clone();
-            let align_started = Instant::now();
-            match tokio::task::spawn_blocking(move || aligner.align(&samples, &text)).await {
+            let reference_words = result.words.clone();
+            let mode = aligner.mode_name();
+            match tokio::task::spawn_blocking(move || {
+                aligner.timestamp_words(&samples, &text, &reference_words)
+            })
+            .await
+            {
                 Ok(Ok(words)) if !words.is_empty() => {
-                    if env_var_truthy("ASR_CTC_ALIGN_TIMINGS") {
-                        eprintln!(
-                            "ctc_align_timing total_ms={:.2} words={}",
-                            align_started.elapsed().as_secs_f64() * 1000.0,
-                            words.len()
-                        );
+                    match apply_side_model_timestamps(&mut result, &words) {
+                        Ok(()) => {}
+                        Err(error) => {
+                            if env_var_truthy("ASR_CTC_ALIGN_TIMINGS") {
+                                eprintln!(
+                                    "ctc_align_timing mode={} status=rejected error={error:?}",
+                                    mode
+                                );
+                            }
+                            warn!(
+                                error = %error,
+                                mode,
+                                "Parakeet CTC timestamps did not match Cohere words; keeping token-frequency Cohere timestamps"
+                            );
+                        }
                     }
-                    result.words = words;
                 }
                 Ok(Ok(_)) => {
                     if env_var_truthy("ASR_CTC_ALIGN_TIMINGS") {
-                        eprintln!("ctc_align_timing status=empty_words");
+                        eprintln!("ctc_align_timing mode={mode} status=empty_words");
                     }
-                    warn!("Parakeet CTC timestamp aligner returned no words; keeping token-frequency Cohere timestamps");
+                    warn!(
+                        mode,
+                        "Parakeet CTC timestamp aligner returned no words; keeping token-frequency Cohere timestamps"
+                    );
                 }
                 Ok(Err(error)) => {
                     if env_var_truthy("ASR_CTC_ALIGN_TIMINGS") {
-                        eprintln!("ctc_align_timing status=error error={error:?}");
+                        eprintln!(
+                            "ctc_align_timing mode={} status=error error={error:?}",
+                            mode
+                        );
                     }
                     warn!(
                         error = %error,
+                        mode,
                         "Parakeet CTC timestamp alignment failed; keeping token-frequency Cohere timestamps"
                     );
                 }
                 Err(error) => {
                     if env_var_truthy("ASR_CTC_ALIGN_TIMINGS") {
-                        eprintln!("ctc_align_timing status=task_error error={error:?}");
+                        eprintln!(
+                            "ctc_align_timing mode={} status=task_error error={error:?}",
+                            mode
+                        );
                     }
                     warn!(
                         error = %error,
+                        mode,
                         "Parakeet CTC timestamp alignment task failed; keeping token-frequency Cohere timestamps"
                     );
                 }
@@ -296,8 +321,10 @@ impl CohereBackend {
 
 struct CohereDecoderClient {
     next_id: AtomicU64,
-    job_tx: Sender<CohereJob>,
+    job_tx: Option<Sender<CohereJob>>,
     state: Arc<Mutex<CohereDecoderState>>,
+    worker_handles: Vec<thread::JoinHandle<()>>,
+    result_handle: Option<thread::JoinHandle<()>>,
 }
 
 struct CohereDecoderState {
@@ -349,24 +376,30 @@ impl CohereDecoderClient {
         } else {
             device_ids.iter().copied().map(Some).collect()
         };
+        let mut workers = Vec::with_capacity(worker_count);
         for device_id in effective_device_ids {
             for _ in 0..onnx_sessions.max(1) {
-                let worker = CohereWorker::new(
+                workers.push(CohereWorker::new(
                     model_dir,
                     device_id,
                     tokenizer.clone(),
                     decode.clone(),
                     runtime.clone(),
-                )?;
-                let worker_job_rx = job_rx.clone();
-                let worker_result_tx = result_tx.clone();
-                thread::spawn(move || worker_loop(worker, worker_job_rx, worker_result_tx));
+                )?);
             }
         }
+        let worker_handles = workers
+            .into_iter()
+            .map(|worker| {
+                let worker_job_rx = job_rx.clone();
+                let worker_result_tx = result_tx.clone();
+                thread::spawn(move || worker_loop(worker, worker_job_rx, worker_result_tx))
+            })
+            .collect();
         drop(result_tx);
 
         let dispatch_state = Arc::clone(&state);
-        thread::spawn(move || {
+        let result_handle = thread::spawn(move || {
             for result in result_rx {
                 dispatch_result(&dispatch_state, result);
             }
@@ -380,8 +413,10 @@ impl CohereDecoderClient {
 
         Ok(Self {
             next_id: AtomicU64::new(0),
-            job_tx,
+            job_tx: Some(job_tx),
             state,
+            worker_handles,
+            result_handle: Some(result_handle),
         })
     }
 
@@ -396,7 +431,15 @@ impl CohereDecoderClient {
             guard.pending.insert(job_id, tx);
         }
 
-        if let Err(error) = self.job_tx.send(CohereJob {
+        let Some(job_tx) = self.job_tx.as_ref() else {
+            self.state
+                .lock()
+                .expect("cohere state mutex poisoned")
+                .pending
+                .remove(&job_id);
+            anyhow::bail!("Cohere worker pool is closed");
+        };
+        if let Err(error) = job_tx.send(CohereJob {
             job_id,
             features,
             duration_ms,
@@ -413,6 +456,26 @@ impl CohereDecoderClient {
             Ok(Ok(text)) => Ok(text),
             Ok(Err(error)) => anyhow::bail!(error),
             Err(_) => anyhow::bail!("Cohere request was canceled"),
+        }
+    }
+}
+
+impl Drop for CohereDecoderClient {
+    fn drop(&mut self) {
+        drop(self.job_tx.take());
+
+        for handle in self.worker_handles.drain(..) {
+            if handle.join().is_err() {
+                warn!("Cohere decoder worker panicked during shutdown");
+            }
+        }
+
+        if self
+            .result_handle
+            .take()
+            .is_some_and(|handle| handle.join().is_err())
+        {
+            warn!("Cohere result dispatcher panicked during shutdown");
         }
     }
 }
@@ -782,7 +845,11 @@ impl CohereWorker {
             );
         }
 
-        Ok(WindowTranscription { text, words })
+        Ok(WindowTranscription {
+            text,
+            words,
+            stitch_words: None,
+        })
     }
 }
 
@@ -1472,5 +1539,122 @@ impl CohereTensorRtConfig {
         } else {
             Some(entries.join(","))
         }
+    }
+}
+
+fn apply_side_model_timestamps(
+    result: &mut WindowTranscription,
+    timestamped_words: &[TimedWord],
+) -> Result<()> {
+    anyhow::ensure!(
+        result.words.len() == timestamped_words.len(),
+        "timestamp word count {} did not match Cohere word count {}",
+        timestamped_words.len(),
+        result.words.len()
+    );
+    anyhow::ensure!(
+        result
+            .words
+            .iter()
+            .zip(timestamped_words)
+            .all(|(cohere, timestamped)| cohere.word == timestamped.word),
+        "timestamp word sequence did not match the Cohere word sequence"
+    );
+
+    let stitch_words = result.words.clone();
+    for (cohere, timestamped) in result.words.iter_mut().zip(timestamped_words) {
+        cohere.start_ms = timestamped.start_ms;
+        cohere.end_ms = timestamped.end_ms;
+    }
+    result.stitch_words = Some(stitch_words);
+    Ok(())
+}
+
+#[cfg(test)]
+mod timestamp_tests {
+    use super::*;
+
+    #[test]
+    fn applying_side_model_timestamps_preserves_cohere_text_and_words() {
+        let mut result = WindowTranscription {
+            text: "Keep  Cohere’s text.\nExactly.".to_string(),
+            words: vec![
+                TimedWord {
+                    word: "Keep".to_string(),
+                    start_ms: 0,
+                    end_ms: 100,
+                },
+                TimedWord {
+                    word: "Cohere’s".to_string(),
+                    start_ms: 100,
+                    end_ms: 200,
+                },
+                TimedWord {
+                    word: "text.".to_string(),
+                    start_ms: 200,
+                    end_ms: 300,
+                },
+                TimedWord {
+                    word: "Exactly.".to_string(),
+                    start_ms: 300,
+                    end_ms: 400,
+                },
+            ],
+            stitch_words: None,
+        };
+        let original_text = result.text.clone();
+        let original_words = result
+            .words
+            .iter()
+            .map(|word| word.word.clone())
+            .collect::<Vec<_>>();
+        let timestamped_words = result
+            .words
+            .iter()
+            .enumerate()
+            .map(|(index, word)| TimedWord {
+                word: word.word.clone(),
+                start_ms: 500 + index as u32 * 200,
+                end_ms: 600 + index as u32 * 200,
+            })
+            .collect::<Vec<_>>();
+
+        apply_side_model_timestamps(&mut result, &timestamped_words).unwrap();
+
+        assert_eq!(result.text.as_bytes(), original_text.as_bytes());
+        assert_eq!(
+            result
+                .words
+                .iter()
+                .map(|word| word.word.clone())
+                .collect::<Vec<_>>(),
+            original_words
+        );
+        assert_eq!(result.words[0].start_ms, 500);
+        assert_eq!(result.words[3].end_ms, 1_200);
+        assert_eq!(result.stitch_words.as_ref().unwrap()[0].start_ms, 0);
+    }
+
+    #[test]
+    fn side_model_word_changes_are_rejected() {
+        let mut result = WindowTranscription {
+            text: "Cohere".to_string(),
+            words: vec![TimedWord {
+                word: "Cohere".to_string(),
+                start_ms: 0,
+                end_ms: 100,
+            }],
+            stitch_words: None,
+        };
+        let timestamped_words = vec![TimedWord {
+            word: "Parakeet".to_string(),
+            start_ms: 10,
+            end_ms: 90,
+        }];
+
+        assert!(apply_side_model_timestamps(&mut result, &timestamped_words).is_err());
+        assert_eq!(result.words[0].word, "Cohere");
+        assert_eq!((result.words[0].start_ms, result.words[0].end_ms), (0, 100));
+        assert!(result.stitch_words.is_none());
     }
 }

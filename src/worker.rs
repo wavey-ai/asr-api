@@ -430,6 +430,7 @@ impl WorkerState {
                 stable_samples,
                 window.is_final,
                 &result.words,
+                result.stitch_words.as_deref(),
             );
             self.emit_streaming_committed(state, committed, true, sink)
                 .await?;
@@ -458,6 +459,7 @@ impl WorkerState {
                     state.chunker.stride_samples(),
                     true,
                     &result.words,
+                    result.stitch_words.as_deref(),
                 );
                 self.emit_streaming_committed(state, committed, false, sink)
                     .await?;
@@ -470,6 +472,9 @@ impl WorkerState {
         } else if let Some(transcript) = state.take_fallback_transcript() {
             self.send_streaming_text_result(state, &transcript, true, close_stream, false, sink)
                 .await?;
+        }
+        if close_stream {
+            self.send_streaming_completion(state, sink).await?;
         }
 
         Ok(())
@@ -537,8 +542,11 @@ impl WorkerState {
             .backend
             .transcribe_window(state.chunker.pending_samples().to_vec(), state.next_seq())
             .await?;
-        let preview_words =
-            preview_absolute_words(state.chunker.pending_start_sample(), &result.words);
+        let preview_words = preview_absolute_words(
+            state.chunker.pending_start_sample(),
+            &result.words,
+            result.stitch_words.as_deref(),
+        );
         let words = state.preview_words(preview_words);
         let transcript = state.preview_transcript(&words, result.text.trim());
         if transcript.is_empty() {
@@ -661,6 +669,31 @@ impl WorkerState {
             channel: WsChannel {
                 alternatives: vec![WsAlternative {
                     transcript: transcript.to_string(),
+                    confidence: 0.0,
+                    words: Vec::new(),
+                }],
+            },
+            metadata: state.results_metadata(),
+        };
+        send_json_event(sink, &event).await
+    }
+
+    async fn send_streaming_completion<S: JsonEventSink + Send>(
+        &self,
+        state: &WsTranscriptState,
+        sink: &mut S,
+    ) -> Result<()> {
+        let event = WsResultsEvent {
+            event_type: "Results",
+            channel_index: [0],
+            duration: state.total_duration_secs(),
+            start: 0.0,
+            is_final: true,
+            speech_final: true,
+            from_finalize: true,
+            channel: WsChannel {
+                alternatives: vec![WsAlternative {
+                    transcript: String::new(),
                     confidence: 0.0,
                     words: Vec::new(),
                 }],
@@ -1463,11 +1496,12 @@ impl WorkerState {
             fallback_fragments.push(trimmed.to_string());
         }
 
-        committed_words.extend(committer.commit(
+        committed_words.extend(committer.commit_with_stitch_words(
             start_sample,
             stable_samples,
             is_final,
             &result.words,
+            result.stitch_words.as_deref().unwrap_or(&result.words),
         ));
         Ok(())
     }
@@ -1564,7 +1598,7 @@ impl WsTranscriptState {
                     }
 
                     let next = &self.pending_final_words[index + 1];
-                    let gap = next.start_ms.saturating_sub(word.end_ms);
+                    let gap = next.stitch_start_ms.saturating_sub(word.stitch_end_ms);
                     (gap >= self.gap_threshold_ms || ends_sentence(&word.word)).then_some(index)
                 })?;
 
@@ -1605,12 +1639,18 @@ impl WsTranscriptState {
 
     fn preview_words(&self, preview_words: Vec<CommittedWord>) -> Vec<CommittedWord> {
         let mut combined = self.pending_final_words.clone();
-        let last_pending_end_ms = combined.last().map(|word| word.end_ms);
-        for preview in preview_words {
+        let last_pending_end_ms = combined.last().map(|word| word.stitch_end_ms);
+        for mut preview in preview_words {
             if last_pending_end_ms
-                .map(|end_ms| preview.end_ms > end_ms.saturating_add(WS_WORD_DEDUPE_EPSILON_MS))
+                .map(|end_ms| {
+                    preview.stitch_end_ms > end_ms.saturating_add(WS_WORD_DEDUPE_EPSILON_MS)
+                })
                 .unwrap_or(true)
             {
+                if let Some(previous) = combined.last() {
+                    preview.start_ms = preview.start_ms.max(previous.end_ms);
+                    preview.end_ms = preview.end_ms.max(preview.start_ms.saturating_add(1));
+                }
                 combined.push(preview);
             }
         }
@@ -1690,23 +1730,43 @@ fn commit_absolute_words(
     stable_samples: usize,
     is_final: bool,
     words: &[crate::chunking::TimedWord],
+    stitch_words: Option<&[crate::chunking::TimedWord]>,
 ) -> Vec<CommittedWord> {
-    committer.commit(start_sample, stable_samples, is_final, words)
+    committer.commit_with_stitch_words(
+        start_sample,
+        stable_samples,
+        is_final,
+        words,
+        stitch_words.unwrap_or(words),
+    )
 }
 
 fn preview_absolute_words(
     start_sample: usize,
     words: &[crate::chunking::TimedWord],
+    stitch_words: Option<&[crate::chunking::TimedWord]>,
 ) -> Vec<CommittedWord> {
     let start_ms_offset = ((start_sample as f64 / ASR_SAMPLE_RATE as f64) * 1000.0).round() as u64;
+    let stitch_words = stitch_words
+        .filter(|stitch_words| {
+            words.len() == stitch_words.len()
+                && words
+                    .iter()
+                    .zip(*stitch_words)
+                    .all(|(word, stitch_word)| word.word == stitch_word.word)
+        })
+        .unwrap_or(words);
     words
         .iter()
-        .filter(|word| !word.word.trim().is_empty())
-        .map(|word| CommittedWord {
+        .zip(stitch_words)
+        .filter(|(word, _)| !word.word.trim().is_empty())
+        .map(|(word, stitch_word)| CommittedWord {
             index: 0,
             start_ms: start_ms_offset + u64::from(word.start_ms),
             end_ms: start_ms_offset + u64::from(word.end_ms),
             word: word.word.clone(),
+            stitch_start_ms: start_ms_offset + u64::from(stitch_word.start_ms),
+            stitch_end_ms: start_ms_offset + u64::from(stitch_word.end_ms),
         })
         .collect()
 }

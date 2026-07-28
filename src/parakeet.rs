@@ -133,6 +133,7 @@ fn dispatch_result(state: &Arc<Mutex<ParakeetState>>, result: TranscriptionResul
                 end_ms,
             })
             .collect(),
+        stitch_words: None,
     });
 
     let mut guard = state.lock().expect("parakeet state mutex poisoned");

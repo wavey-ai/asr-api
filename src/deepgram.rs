@@ -635,18 +635,24 @@ mod tests {
                 start_ms: 0,
                 end_ms: 100,
                 word: "hello".into(),
+                stitch_start_ms: 0,
+                stitch_end_ms: 100,
             },
             CommittedWord {
                 index: 1,
                 start_ms: 120,
                 end_ms: 180,
                 word: ",".into(),
+                stitch_start_ms: 120,
+                stitch_end_ms: 180,
             },
             CommittedWord {
                 index: 2,
                 start_ms: 220,
                 end_ms: 320,
                 word: "world".into(),
+                stitch_start_ms: 220,
+                stitch_end_ms: 320,
             },
         ];
         assert_eq!(transcript_from_words(&words, ""), "hello, world");

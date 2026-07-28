@@ -16,6 +16,8 @@ pub struct CommittedWord {
     pub start_ms: u64,
     pub end_ms: u64,
     pub word: String,
+    pub(crate) stitch_start_ms: u64,
+    pub(crate) stitch_end_ms: u64,
 }
 
 #[derive(Debug, Clone)]
@@ -96,6 +98,7 @@ impl AudioChunker {
 pub struct WordCommitter {
     next_index: u64,
     last_emitted_end_ms: Option<u64>,
+    last_output_end_ms: Option<u64>,
 }
 
 impl WordCommitter {
@@ -106,25 +109,52 @@ impl WordCommitter {
         is_final: bool,
         words: &[TimedWord],
     ) -> Vec<CommittedWord> {
+        self.commit_with_stitch_words(window_start_sample, stable_samples, is_final, words, words)
+    }
+
+    pub fn commit_with_stitch_words(
+        &mut self,
+        window_start_sample: usize,
+        stable_samples: usize,
+        is_final: bool,
+        words: &[TimedWord],
+        stitch_words: &[TimedWord],
+    ) -> Vec<CommittedWord> {
+        let stitch_words = if words.len() == stitch_words.len()
+            && words
+                .iter()
+                .zip(stitch_words)
+                .all(|(word, stitch_word)| word.word == stitch_word.word)
+        {
+            stitch_words
+        } else {
+            words
+        };
         let stable_limit_ms = sample_to_ms(stable_samples);
         let window_start_ms = sample_to_ms(window_start_sample);
         let mut emitted = Vec::new();
 
-        for word in words {
+        for (word, stitch_word) in words.iter().zip(stitch_words) {
             if word.word.trim().is_empty() {
                 continue;
             }
-            if !is_final && u64::from(word.end_ms) > stable_limit_ms {
+            if !is_final && u64::from(stitch_word.end_ms) > stable_limit_ms {
                 continue;
             }
 
-            let start_ms = window_start_ms + u64::from(word.start_ms);
-            let end_ms = window_start_ms + u64::from(word.end_ms);
+            let mut start_ms = window_start_ms + u64::from(word.start_ms);
+            let mut end_ms = window_start_ms + u64::from(word.end_ms);
+            let stitch_start_ms = window_start_ms + u64::from(stitch_word.start_ms);
+            let stitch_end_ms = window_start_ms + u64::from(stitch_word.end_ms);
 
             if let Some(last_end_ms) = self.last_emitted_end_ms {
-                if end_ms <= last_end_ms.saturating_add(DEDUPE_EPSILON_MS) {
+                if stitch_end_ms <= last_end_ms.saturating_add(DEDUPE_EPSILON_MS) {
                     continue;
                 }
+            }
+            if let Some(last_output_end_ms) = self.last_output_end_ms {
+                start_ms = start_ms.max(last_output_end_ms);
+                end_ms = end_ms.max(start_ms.saturating_add(1));
             }
 
             emitted.push(CommittedWord {
@@ -132,9 +162,12 @@ impl WordCommitter {
                 start_ms,
                 end_ms,
                 word: word.word.clone(),
+                stitch_start_ms,
+                stitch_end_ms,
             });
             self.next_index += 1;
-            self.last_emitted_end_ms = Some(end_ms);
+            self.last_emitted_end_ms = Some(stitch_end_ms);
+            self.last_output_end_ms = Some(end_ms);
         }
 
         emitted
@@ -211,5 +244,73 @@ mod tests {
         assert_eq!(second.len(), 2);
         assert_eq!(second[0].word, "beta");
         assert_eq!(second[1].word, "gamma");
+    }
+
+    #[test]
+    fn committer_uses_stitch_times_for_selection_and_side_times_for_output() {
+        let mut committer = WordCommitter::default();
+        let side_words = vec![
+            TimedWord {
+                word: "alpha".into(),
+                start_ms: 8_200,
+                end_ms: 8_800,
+            },
+            TimedWord {
+                word: "beta".into(),
+                start_ms: 8_900,
+                end_ms: 9_400,
+            },
+        ];
+        let stitch_words = vec![
+            TimedWord {
+                word: "alpha".into(),
+                start_ms: 200,
+                end_ms: 1_000,
+            },
+            TimedWord {
+                word: "beta".into(),
+                start_ms: 7_500,
+                end_ms: 8_400,
+            },
+        ];
+
+        let committed = committer.commit_with_stitch_words(
+            0,
+            8 * ASR_SAMPLE_RATE as usize,
+            false,
+            &side_words,
+            &stitch_words,
+        );
+
+        assert_eq!(committed.len(), 1);
+        assert_eq!(committed[0].word, "alpha");
+        assert_eq!((committed[0].start_ms, committed[0].end_ms), (8_200, 8_800));
+        assert_eq!(
+            (committed[0].stitch_start_ms, committed[0].stitch_end_ms,),
+            (200, 1_000)
+        );
+
+        let next_side_words = vec![TimedWord {
+            word: "gamma".into(),
+            start_ms: 0,
+            end_ms: 100,
+        }];
+        let next_stitch_words = vec![TimedWord {
+            word: "gamma".into(),
+            start_ms: 200,
+            end_ms: 400,
+        }];
+        let next = committer.commit_with_stitch_words(
+            8 * ASR_SAMPLE_RATE as usize,
+            8 * ASR_SAMPLE_RATE as usize,
+            true,
+            &next_side_words,
+            &next_stitch_words,
+        );
+
+        assert_eq!(next.len(), 1);
+        assert_eq!(next[0].word, "gamma");
+        assert_eq!(next[0].start_ms, committed[0].end_ms);
+        assert!(next[0].end_ms > next[0].start_ms);
     }
 }

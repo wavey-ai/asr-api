@@ -215,6 +215,7 @@ impl CohereMlxWorker {
         Ok(WindowTranscription {
             text: response.text,
             words,
+            stitch_words: None,
         })
     }
 }
