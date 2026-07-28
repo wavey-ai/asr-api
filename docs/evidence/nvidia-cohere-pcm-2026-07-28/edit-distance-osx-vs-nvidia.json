@@ -1,0 +1,1535 @@
+{
+  "metric": "per-source Levenshtein distance over exact Unicode code points",
+  "normalization": "none",
+  "case_folding": false,
+  "punctuation_removed": false,
+  "source_pairs": 249,
+  "identical_pairs": 1,
+  "osx_characters": 1251386,
+  "nvidia_characters": 2388822,
+  "total_edit_distance": 1257631,
+  "distance_divided_by_osx_characters": 1.0049904665706664,
+  "distance_divided_by_max_character_total": 0.5264649270644695,
+  "per_source_distance": {
+    "mean": 5050.726907630522,
+    "p50": 92.0,
+    "p90": 9885.000000000004,
+    "p95": 51135.39999999997,
+    "p99": 75921.80000000003,
+    "maximum": 86902
+  },
+  "per_source": [
+    {
+      "source_index": 1,
+      "osx_characters": 2806,
+      "nvidia_characters": 68966,
+      "edit_distance": 66201
+    },
+    {
+      "source_index": 2,
+      "osx_characters": 4594,
+      "nvidia_characters": 71323,
+      "edit_distance": 66855
+    },
+    {
+      "source_index": 3,
+      "osx_characters": 62287,
+      "nvidia_characters": 65951,
+      "edit_distance": 10248
+    },
+    {
+      "source_index": 4,
+      "osx_characters": 52013,
+      "nvidia_characters": 54935,
+      "edit_distance": 8819
+    },
+    {
+      "source_index": 5,
+      "osx_characters": 90140,
+      "nvidia_characters": 95329,
+      "edit_distance": 17185
+    },
+    {
+      "source_index": 6,
+      "osx_characters": 51131,
+      "nvidia_characters": 54703,
+      "edit_distance": 8269
+    },
+    {
+      "source_index": 7,
+      "osx_characters": 47227,
+      "nvidia_characters": 50518,
+      "edit_distance": 8773
+    },
+    {
+      "source_index": 8,
+      "osx_characters": 59708,
+      "nvidia_characters": 62979,
+      "edit_distance": 9852
+    },
+    {
+      "source_index": 9,
+      "osx_characters": 50682,
+      "nvidia_characters": 54222,
+      "edit_distance": 9420
+    },
+    {
+      "source_index": 10,
+      "osx_characters": 556,
+      "nvidia_characters": 587,
+      "edit_distance": 31
+    },
+    {
+      "source_index": 11,
+      "osx_characters": 492,
+      "nvidia_characters": 542,
+      "edit_distance": 68
+    },
+    {
+      "source_index": 12,
+      "osx_characters": 6109,
+      "nvidia_characters": 6593,
+      "edit_distance": 699
+    },
+    {
+      "source_index": 13,
+      "osx_characters": 53143,
+      "nvidia_characters": 57470,
+      "edit_distance": 10716
+    },
+    {
+      "source_index": 14,
+      "osx_characters": 89165,
+      "nvidia_characters": 94101,
+      "edit_distance": 17905
+    },
+    {
+      "source_index": 15,
+      "osx_characters": 74763,
+      "nvidia_characters": 79060,
+      "edit_distance": 14015
+    },
+    {
+      "source_index": 16,
+      "osx_characters": 50432,
+      "nvidia_characters": 53226,
+      "edit_distance": 9366
+    },
+    {
+      "source_index": 17,
+      "osx_characters": 72785,
+      "nvidia_characters": 77944,
+      "edit_distance": 13083
+    },
+    {
+      "source_index": 18,
+      "osx_characters": 49685,
+      "nvidia_characters": 53166,
+      "edit_distance": 8126
+    },
+    {
+      "source_index": 19,
+      "osx_characters": 55485,
+      "nvidia_characters": 58283,
+      "edit_distance": 9165
+    },
+    {
+      "source_index": 20,
+      "osx_characters": 65887,
+      "nvidia_characters": 69533,
+      "edit_distance": 11931
+    },
+    {
+      "source_index": 21,
+      "osx_characters": 4294,
+      "nvidia_characters": 91116,
+      "edit_distance": 86902
+    },
+    {
+      "source_index": 22,
+      "osx_characters": 7956,
+      "nvidia_characters": 71711,
+      "edit_distance": 64231
+    },
+    {
+      "source_index": 23,
+      "osx_characters": 991,
+      "nvidia_characters": 10525,
+      "edit_distance": 9568
+    },
+    {
+      "source_index": 24,
+      "osx_characters": 2499,
+      "nvidia_characters": 50791,
+      "edit_distance": 48349
+    },
+    {
+      "source_index": 25,
+      "osx_characters": 3717,
+      "nvidia_characters": 58854,
+      "edit_distance": 55227
+    },
+    {
+      "source_index": 26,
+      "osx_characters": 3872,
+      "nvidia_characters": 56725,
+      "edit_distance": 52993
+    },
+    {
+      "source_index": 27,
+      "osx_characters": 20845,
+      "nvidia_characters": 21988,
+      "edit_distance": 1609
+    },
+    {
+      "source_index": 28,
+      "osx_characters": 1842,
+      "nvidia_characters": 70526,
+      "edit_distance": 68691
+    },
+    {
+      "source_index": 29,
+      "osx_characters": 3555,
+      "nvidia_characters": 84779,
+      "edit_distance": 81262
+    },
+    {
+      "source_index": 30,
+      "osx_characters": 5118,
+      "nvidia_characters": 18170,
+      "edit_distance": 13653
+    },
+    {
+      "source_index": 31,
+      "osx_characters": 377,
+      "nvidia_characters": 839,
+      "edit_distance": 495
+    },
+    {
+      "source_index": 32,
+      "osx_characters": 934,
+      "nvidia_characters": 42870,
+      "edit_distance": 41946
+    },
+    {
+      "source_index": 33,
+      "osx_characters": 3155,
+      "nvidia_characters": 25656,
+      "edit_distance": 22719
+    },
+    {
+      "source_index": 34,
+      "osx_characters": 557,
+      "nvidia_characters": 68486,
+      "edit_distance": 67929
+    },
+    {
+      "source_index": 35,
+      "osx_characters": 1483,
+      "nvidia_characters": 76015,
+      "edit_distance": 74536
+    },
+    {
+      "source_index": 36,
+      "osx_characters": 2229,
+      "nvidia_characters": 79417,
+      "edit_distance": 77201
+    },
+    {
+      "source_index": 37,
+      "osx_characters": 1170,
+      "nvidia_characters": 1269,
+      "edit_distance": 99
+    },
+    {
+      "source_index": 38,
+      "osx_characters": 1251,
+      "nvidia_characters": 56428,
+      "edit_distance": 55180
+    },
+    {
+      "source_index": 39,
+      "osx_characters": 1004,
+      "nvidia_characters": 64279,
+      "edit_distance": 63275
+    },
+    {
+      "source_index": 40,
+      "osx_characters": 2144,
+      "nvidia_characters": 2275,
+      "edit_distance": 380
+    },
+    {
+      "source_index": 41,
+      "osx_characters": 3773,
+      "nvidia_characters": 6990,
+      "edit_distance": 3487
+    },
+    {
+      "source_index": 42,
+      "osx_characters": 13104,
+      "nvidia_characters": 21714,
+      "edit_distance": 10017
+    },
+    {
+      "source_index": 43,
+      "osx_characters": 3969,
+      "nvidia_characters": 6083,
+      "edit_distance": 2646
+    },
+    {
+      "source_index": 44,
+      "osx_characters": 3500,
+      "nvidia_characters": 3723,
+      "edit_distance": 284
+    },
+    {
+      "source_index": 45,
+      "osx_characters": 2764,
+      "nvidia_characters": 3343,
+      "edit_distance": 893
+    },
+    {
+      "source_index": 46,
+      "osx_characters": 4855,
+      "nvidia_characters": 6049,
+      "edit_distance": 1777
+    },
+    {
+      "source_index": 47,
+      "osx_characters": 780,
+      "nvidia_characters": 901,
+      "edit_distance": 200
+    },
+    {
+      "source_index": 48,
+      "osx_characters": 695,
+      "nvidia_characters": 1226,
+      "edit_distance": 617
+    },
+    {
+      "source_index": 49,
+      "osx_characters": 435,
+      "nvidia_characters": 880,
+      "edit_distance": 504
+    },
+    {
+      "source_index": 50,
+      "osx_characters": 817,
+      "nvidia_characters": 884,
+      "edit_distance": 78
+    },
+    {
+      "source_index": 51,
+      "osx_characters": 855,
+      "nvidia_characters": 894,
+      "edit_distance": 93
+    },
+    {
+      "source_index": 52,
+      "osx_characters": 1302,
+      "nvidia_characters": 1369,
+      "edit_distance": 69
+    },
+    {
+      "source_index": 53,
+      "osx_characters": 841,
+      "nvidia_characters": 863,
+      "edit_distance": 38
+    },
+    {
+      "source_index": 54,
+      "osx_characters": 427,
+      "nvidia_characters": 453,
+      "edit_distance": 26
+    },
+    {
+      "source_index": 55,
+      "osx_characters": 918,
+      "nvidia_characters": 959,
+      "edit_distance": 59
+    },
+    {
+      "source_index": 56,
+      "osx_characters": 1051,
+      "nvidia_characters": 1161,
+      "edit_distance": 118
+    },
+    {
+      "source_index": 57,
+      "osx_characters": 1103,
+      "nvidia_characters": 1176,
+      "edit_distance": 81
+    },
+    {
+      "source_index": 58,
+      "osx_characters": 1084,
+      "nvidia_characters": 1144,
+      "edit_distance": 60
+    },
+    {
+      "source_index": 59,
+      "osx_characters": 1191,
+      "nvidia_characters": 1259,
+      "edit_distance": 69
+    },
+    {
+      "source_index": 60,
+      "osx_characters": 1192,
+      "nvidia_characters": 1285,
+      "edit_distance": 103
+    },
+    {
+      "source_index": 61,
+      "osx_characters": 619,
+      "nvidia_characters": 696,
+      "edit_distance": 77
+    },
+    {
+      "source_index": 62,
+      "osx_characters": 1121,
+      "nvidia_characters": 1201,
+      "edit_distance": 92
+    },
+    {
+      "source_index": 63,
+      "osx_characters": 685,
+      "nvidia_characters": 1282,
+      "edit_distance": 699
+    },
+    {
+      "source_index": 64,
+      "osx_characters": 706,
+      "nvidia_characters": 718,
+      "edit_distance": 28
+    },
+    {
+      "source_index": 65,
+      "osx_characters": 1307,
+      "nvidia_characters": 1359,
+      "edit_distance": 70
+    },
+    {
+      "source_index": 66,
+      "osx_characters": 1260,
+      "nvidia_characters": 1904,
+      "edit_distance": 650
+    },
+    {
+      "source_index": 67,
+      "osx_characters": 1051,
+      "nvidia_characters": 1118,
+      "edit_distance": 88
+    },
+    {
+      "source_index": 68,
+      "osx_characters": 1192,
+      "nvidia_characters": 1285,
+      "edit_distance": 103
+    },
+    {
+      "source_index": 69,
+      "osx_characters": 396,
+      "nvidia_characters": 450,
+      "edit_distance": 54
+    },
+    {
+      "source_index": 70,
+      "osx_characters": 844,
+      "nvidia_characters": 874,
+      "edit_distance": 82
+    },
+    {
+      "source_index": 71,
+      "osx_characters": 1176,
+      "nvidia_characters": 1283,
+      "edit_distance": 107
+    },
+    {
+      "source_index": 72,
+      "osx_characters": 633,
+      "nvidia_characters": 673,
+      "edit_distance": 48
+    },
+    {
+      "source_index": 73,
+      "osx_characters": 836,
+      "nvidia_characters": 869,
+      "edit_distance": 51
+    },
+    {
+      "source_index": 74,
+      "osx_characters": 187,
+      "nvidia_characters": 939,
+      "edit_distance": 756
+    },
+    {
+      "source_index": 75,
+      "osx_characters": 761,
+      "nvidia_characters": 819,
+      "edit_distance": 61
+    },
+    {
+      "source_index": 76,
+      "osx_characters": 1051,
+      "nvidia_characters": 1118,
+      "edit_distance": 88
+    },
+    {
+      "source_index": 77,
+      "osx_characters": 500,
+      "nvidia_characters": 504,
+      "edit_distance": 23
+    },
+    {
+      "source_index": 78,
+      "osx_characters": 676,
+      "nvidia_characters": 709,
+      "edit_distance": 43
+    },
+    {
+      "source_index": 79,
+      "osx_characters": 505,
+      "nvidia_characters": 516,
+      "edit_distance": 11
+    },
+    {
+      "source_index": 80,
+      "osx_characters": 938,
+      "nvidia_characters": 1011,
+      "edit_distance": 85
+    },
+    {
+      "source_index": 81,
+      "osx_characters": 786,
+      "nvidia_characters": 846,
+      "edit_distance": 60
+    },
+    {
+      "source_index": 82,
+      "osx_characters": 1124,
+      "nvidia_characters": 1202,
+      "edit_distance": 78
+    },
+    {
+      "source_index": 83,
+      "osx_characters": 1071,
+      "nvidia_characters": 1148,
+      "edit_distance": 105
+    },
+    {
+      "source_index": 84,
+      "osx_characters": 1200,
+      "nvidia_characters": 1277,
+      "edit_distance": 109
+    },
+    {
+      "source_index": 85,
+      "osx_characters": 987,
+      "nvidia_characters": 1062,
+      "edit_distance": 99
+    },
+    {
+      "source_index": 86,
+      "osx_characters": 711,
+      "nvidia_characters": 770,
+      "edit_distance": 62
+    },
+    {
+      "source_index": 87,
+      "osx_characters": 693,
+      "nvidia_characters": 731,
+      "edit_distance": 48
+    },
+    {
+      "source_index": 88,
+      "osx_characters": 606,
+      "nvidia_characters": 627,
+      "edit_distance": 23
+    },
+    {
+      "source_index": 89,
+      "osx_characters": 851,
+      "nvidia_characters": 949,
+      "edit_distance": 98
+    },
+    {
+      "source_index": 90,
+      "osx_characters": 1407,
+      "nvidia_characters": 1491,
+      "edit_distance": 94
+    },
+    {
+      "source_index": 91,
+      "osx_characters": 1695,
+      "nvidia_characters": 1819,
+      "edit_distance": 131
+    },
+    {
+      "source_index": 92,
+      "osx_characters": 1445,
+      "nvidia_characters": 1530,
+      "edit_distance": 104
+    },
+    {
+      "source_index": 93,
+      "osx_characters": 819,
+      "nvidia_characters": 882,
+      "edit_distance": 64
+    },
+    {
+      "source_index": 94,
+      "osx_characters": 955,
+      "nvidia_characters": 1001,
+      "edit_distance": 48
+    },
+    {
+      "source_index": 95,
+      "osx_characters": 966,
+      "nvidia_characters": 1002,
+      "edit_distance": 54
+    },
+    {
+      "source_index": 96,
+      "osx_characters": 108,
+      "nvidia_characters": 1291,
+      "edit_distance": 1183
+    },
+    {
+      "source_index": 97,
+      "osx_characters": 1054,
+      "nvidia_characters": 1139,
+      "edit_distance": 89
+    },
+    {
+      "source_index": 98,
+      "osx_characters": 836,
+      "nvidia_characters": 869,
+      "edit_distance": 51
+    },
+    {
+      "source_index": 99,
+      "osx_characters": 849,
+      "nvidia_characters": 883,
+      "edit_distance": 97
+    },
+    {
+      "source_index": 100,
+      "osx_characters": 1471,
+      "nvidia_characters": 1549,
+      "edit_distance": 114
+    },
+    {
+      "source_index": 101,
+      "osx_characters": 1235,
+      "nvidia_characters": 1309,
+      "edit_distance": 80
+    },
+    {
+      "source_index": 102,
+      "osx_characters": 600,
+      "nvidia_characters": 595,
+      "edit_distance": 56
+    },
+    {
+      "source_index": 103,
+      "osx_characters": 926,
+      "nvidia_characters": 983,
+      "edit_distance": 57
+    },
+    {
+      "source_index": 104,
+      "osx_characters": 1051,
+      "nvidia_characters": 1097,
+      "edit_distance": 60
+    },
+    {
+      "source_index": 105,
+      "osx_characters": 801,
+      "nvidia_characters": 843,
+      "edit_distance": 47
+    },
+    {
+      "source_index": 106,
+      "osx_characters": 997,
+      "nvidia_characters": 1046,
+      "edit_distance": 70
+    },
+    {
+      "source_index": 107,
+      "osx_characters": 711,
+      "nvidia_characters": 767,
+      "edit_distance": 56
+    },
+    {
+      "source_index": 108,
+      "osx_characters": 1804,
+      "nvidia_characters": 1902,
+      "edit_distance": 122
+    },
+    {
+      "source_index": 109,
+      "osx_characters": 1204,
+      "nvidia_characters": 1300,
+      "edit_distance": 96
+    },
+    {
+      "source_index": 110,
+      "osx_characters": 827,
+      "nvidia_characters": 902,
+      "edit_distance": 97
+    },
+    {
+      "source_index": 111,
+      "osx_characters": 762,
+      "nvidia_characters": 843,
+      "edit_distance": 107
+    },
+    {
+      "source_index": 112,
+      "osx_characters": 144,
+      "nvidia_characters": 1370,
+      "edit_distance": 1231
+    },
+    {
+      "source_index": 113,
+      "osx_characters": 1311,
+      "nvidia_characters": 1375,
+      "edit_distance": 78
+    },
+    {
+      "source_index": 114,
+      "osx_characters": 1127,
+      "nvidia_characters": 1223,
+      "edit_distance": 100
+    },
+    {
+      "source_index": 115,
+      "osx_characters": 1571,
+      "nvidia_characters": 1652,
+      "edit_distance": 105
+    },
+    {
+      "source_index": 116,
+      "osx_characters": 1163,
+      "nvidia_characters": 1209,
+      "edit_distance": 58
+    },
+    {
+      "source_index": 117,
+      "osx_characters": 1020,
+      "nvidia_characters": 1091,
+      "edit_distance": 77
+    },
+    {
+      "source_index": 118,
+      "osx_characters": 62,
+      "nvidia_characters": 870,
+      "edit_distance": 808
+    },
+    {
+      "source_index": 119,
+      "osx_characters": 465,
+      "nvidia_characters": 506,
+      "edit_distance": 41
+    },
+    {
+      "source_index": 120,
+      "osx_characters": 35,
+      "nvidia_characters": 923,
+      "edit_distance": 888
+    },
+    {
+      "source_index": 121,
+      "osx_characters": 621,
+      "nvidia_characters": 621,
+      "edit_distance": 28
+    },
+    {
+      "source_index": 122,
+      "osx_characters": 995,
+      "nvidia_characters": 1043,
+      "edit_distance": 58
+    },
+    {
+      "source_index": 123,
+      "osx_characters": 1119,
+      "nvidia_characters": 1197,
+      "edit_distance": 85
+    },
+    {
+      "source_index": 124,
+      "osx_characters": 821,
+      "nvidia_characters": 865,
+      "edit_distance": 72
+    },
+    {
+      "source_index": 125,
+      "osx_characters": 788,
+      "nvidia_characters": 841,
+      "edit_distance": 61
+    },
+    {
+      "source_index": 126,
+      "osx_characters": 935,
+      "nvidia_characters": 991,
+      "edit_distance": 80
+    },
+    {
+      "source_index": 127,
+      "osx_characters": 703,
+      "nvidia_characters": 742,
+      "edit_distance": 39
+    },
+    {
+      "source_index": 128,
+      "osx_characters": 929,
+      "nvidia_characters": 973,
+      "edit_distance": 93
+    },
+    {
+      "source_index": 129,
+      "osx_characters": 1071,
+      "nvidia_characters": 1160,
+      "edit_distance": 100
+    },
+    {
+      "source_index": 130,
+      "osx_characters": 1100,
+      "nvidia_characters": 1152,
+      "edit_distance": 52
+    },
+    {
+      "source_index": 131,
+      "osx_characters": 1021,
+      "nvidia_characters": 1098,
+      "edit_distance": 77
+    },
+    {
+      "source_index": 132,
+      "osx_characters": 1198,
+      "nvidia_characters": 1294,
+      "edit_distance": 96
+    },
+    {
+      "source_index": 133,
+      "osx_characters": 897,
+      "nvidia_characters": 974,
+      "edit_distance": 87
+    },
+    {
+      "source_index": 134,
+      "osx_characters": 984,
+      "nvidia_characters": 1070,
+      "edit_distance": 93
+    },
+    {
+      "source_index": 135,
+      "osx_characters": 614,
+      "nvidia_characters": 690,
+      "edit_distance": 78
+    },
+    {
+      "source_index": 136,
+      "osx_characters": 682,
+      "nvidia_characters": 717,
+      "edit_distance": 35
+    },
+    {
+      "source_index": 137,
+      "osx_characters": 920,
+      "nvidia_characters": 994,
+      "edit_distance": 78
+    },
+    {
+      "source_index": 138,
+      "osx_characters": 1166,
+      "nvidia_characters": 1237,
+      "edit_distance": 92
+    },
+    {
+      "source_index": 139,
+      "osx_characters": 778,
+      "nvidia_characters": 828,
+      "edit_distance": 60
+    },
+    {
+      "source_index": 140,
+      "osx_characters": 1027,
+      "nvidia_characters": 1057,
+      "edit_distance": 52
+    },
+    {
+      "source_index": 141,
+      "osx_characters": 1118,
+      "nvidia_characters": 1203,
+      "edit_distance": 91
+    },
+    {
+      "source_index": 142,
+      "osx_characters": 874,
+      "nvidia_characters": 950,
+      "edit_distance": 76
+    },
+    {
+      "source_index": 143,
+      "osx_characters": 1287,
+      "nvidia_characters": 1344,
+      "edit_distance": 65
+    },
+    {
+      "source_index": 144,
+      "osx_characters": 1195,
+      "nvidia_characters": 1266,
+      "edit_distance": 89
+    },
+    {
+      "source_index": 145,
+      "osx_characters": 319,
+      "nvidia_characters": 868,
+      "edit_distance": 568
+    },
+    {
+      "source_index": 146,
+      "osx_characters": 953,
+      "nvidia_characters": 1025,
+      "edit_distance": 72
+    },
+    {
+      "source_index": 147,
+      "osx_characters": 901,
+      "nvidia_characters": 964,
+      "edit_distance": 78
+    },
+    {
+      "source_index": 148,
+      "osx_characters": 1217,
+      "nvidia_characters": 1278,
+      "edit_distance": 61
+    },
+    {
+      "source_index": 149,
+      "osx_characters": 617,
+      "nvidia_characters": 659,
+      "edit_distance": 56
+    },
+    {
+      "source_index": 150,
+      "osx_characters": 1175,
+      "nvidia_characters": 1241,
+      "edit_distance": 108
+    },
+    {
+      "source_index": 151,
+      "osx_characters": 1515,
+      "nvidia_characters": 1605,
+      "edit_distance": 94
+    },
+    {
+      "source_index": 152,
+      "osx_characters": 1154,
+      "nvidia_characters": 1199,
+      "edit_distance": 66
+    },
+    {
+      "source_index": 153,
+      "osx_characters": 43,
+      "nvidia_characters": 1531,
+      "edit_distance": 1488
+    },
+    {
+      "source_index": 154,
+      "osx_characters": 703,
+      "nvidia_characters": 749,
+      "edit_distance": 55
+    },
+    {
+      "source_index": 155,
+      "osx_characters": 1047,
+      "nvidia_characters": 1092,
+      "edit_distance": 69
+    },
+    {
+      "source_index": 156,
+      "osx_characters": 135,
+      "nvidia_characters": 1026,
+      "edit_distance": 898
+    },
+    {
+      "source_index": 157,
+      "osx_characters": 960,
+      "nvidia_characters": 1026,
+      "edit_distance": 85
+    },
+    {
+      "source_index": 158,
+      "osx_characters": 1212,
+      "nvidia_characters": 1301,
+      "edit_distance": 89
+    },
+    {
+      "source_index": 159,
+      "osx_characters": 777,
+      "nvidia_characters": 819,
+      "edit_distance": 42
+    },
+    {
+      "source_index": 160,
+      "osx_characters": 293,
+      "nvidia_characters": 1206,
+      "edit_distance": 919
+    },
+    {
+      "source_index": 161,
+      "osx_characters": 184,
+      "nvidia_characters": 1332,
+      "edit_distance": 1162
+    },
+    {
+      "source_index": 162,
+      "osx_characters": 218,
+      "nvidia_characters": 663,
+      "edit_distance": 456
+    },
+    {
+      "source_index": 163,
+      "osx_characters": 43,
+      "nvidia_characters": 20,
+      "edit_distance": 23
+    },
+    {
+      "source_index": 164,
+      "osx_characters": 118,
+      "nvidia_characters": 603,
+      "edit_distance": 493
+    },
+    {
+      "source_index": 165,
+      "osx_characters": 1068,
+      "nvidia_characters": 1149,
+      "edit_distance": 85
+    },
+    {
+      "source_index": 166,
+      "osx_characters": 723,
+      "nvidia_characters": 767,
+      "edit_distance": 44
+    },
+    {
+      "source_index": 167,
+      "osx_characters": 826,
+      "nvidia_characters": 878,
+      "edit_distance": 72
+    },
+    {
+      "source_index": 168,
+      "osx_characters": 1103,
+      "nvidia_characters": 1144,
+      "edit_distance": 51
+    },
+    {
+      "source_index": 169,
+      "osx_characters": 389,
+      "nvidia_characters": 958,
+      "edit_distance": 618
+    },
+    {
+      "source_index": 170,
+      "osx_characters": 11,
+      "nvidia_characters": 11,
+      "edit_distance": 0
+    },
+    {
+      "source_index": 171,
+      "osx_characters": 5339,
+      "nvidia_characters": 5585,
+      "edit_distance": 304
+    },
+    {
+      "source_index": 172,
+      "osx_characters": 1278,
+      "nvidia_characters": 1320,
+      "edit_distance": 110
+    },
+    {
+      "source_index": 173,
+      "osx_characters": 741,
+      "nvidia_characters": 783,
+      "edit_distance": 58
+    },
+    {
+      "source_index": 174,
+      "osx_characters": 647,
+      "nvidia_characters": 649,
+      "edit_distance": 40
+    },
+    {
+      "source_index": 175,
+      "osx_characters": 1129,
+      "nvidia_characters": 1206,
+      "edit_distance": 77
+    },
+    {
+      "source_index": 176,
+      "osx_characters": 717,
+      "nvidia_characters": 794,
+      "edit_distance": 77
+    },
+    {
+      "source_index": 177,
+      "osx_characters": 656,
+      "nvidia_characters": 687,
+      "edit_distance": 41
+    },
+    {
+      "source_index": 178,
+      "osx_characters": 1018,
+      "nvidia_characters": 1051,
+      "edit_distance": 53
+    },
+    {
+      "source_index": 179,
+      "osx_characters": 685,
+      "nvidia_characters": 739,
+      "edit_distance": 54
+    },
+    {
+      "source_index": 180,
+      "osx_characters": 2722,
+      "nvidia_characters": 4891,
+      "edit_distance": 2525
+    },
+    {
+      "source_index": 181,
+      "osx_characters": 934,
+      "nvidia_characters": 3283,
+      "edit_distance": 2436
+    },
+    {
+      "source_index": 182,
+      "osx_characters": 679,
+      "nvidia_characters": 708,
+      "edit_distance": 59
+    },
+    {
+      "source_index": 183,
+      "osx_characters": 1019,
+      "nvidia_characters": 1104,
+      "edit_distance": 101
+    },
+    {
+      "source_index": 184,
+      "osx_characters": 920,
+      "nvidia_characters": 1002,
+      "edit_distance": 90
+    },
+    {
+      "source_index": 185,
+      "osx_characters": 832,
+      "nvidia_characters": 890,
+      "edit_distance": 64
+    },
+    {
+      "source_index": 186,
+      "osx_characters": 467,
+      "nvidia_characters": 503,
+      "edit_distance": 36
+    },
+    {
+      "source_index": 187,
+      "osx_characters": 757,
+      "nvidia_characters": 806,
+      "edit_distance": 51
+    },
+    {
+      "source_index": 188,
+      "osx_characters": 1213,
+      "nvidia_characters": 1325,
+      "edit_distance": 122
+    },
+    {
+      "source_index": 189,
+      "osx_characters": 551,
+      "nvidia_characters": 574,
+      "edit_distance": 26
+    },
+    {
+      "source_index": 190,
+      "osx_characters": 627,
+      "nvidia_characters": 659,
+      "edit_distance": 53
+    },
+    {
+      "source_index": 191,
+      "osx_characters": 1315,
+      "nvidia_characters": 1393,
+      "edit_distance": 78
+    },
+    {
+      "source_index": 192,
+      "osx_characters": 156,
+      "nvidia_characters": 1323,
+      "edit_distance": 1176
+    },
+    {
+      "source_index": 193,
+      "osx_characters": 1454,
+      "nvidia_characters": 1527,
+      "edit_distance": 113
+    },
+    {
+      "source_index": 194,
+      "osx_characters": 583,
+      "nvidia_characters": 618,
+      "edit_distance": 51
+    },
+    {
+      "source_index": 195,
+      "osx_characters": 540,
+      "nvidia_characters": 572,
+      "edit_distance": 32
+    },
+    {
+      "source_index": 196,
+      "osx_characters": 1007,
+      "nvidia_characters": 1065,
+      "edit_distance": 94
+    },
+    {
+      "source_index": 197,
+      "osx_characters": 3854,
+      "nvidia_characters": 4055,
+      "edit_distance": 308
+    },
+    {
+      "source_index": 198,
+      "osx_characters": 1315,
+      "nvidia_characters": 1393,
+      "edit_distance": 78
+    },
+    {
+      "source_index": 199,
+      "osx_characters": 5026,
+      "nvidia_characters": 5254,
+      "edit_distance": 293
+    },
+    {
+      "source_index": 200,
+      "osx_characters": 975,
+      "nvidia_characters": 1074,
+      "edit_distance": 109
+    },
+    {
+      "source_index": 201,
+      "osx_characters": 599,
+      "nvidia_characters": 631,
+      "edit_distance": 54
+    },
+    {
+      "source_index": 202,
+      "osx_characters": 3731,
+      "nvidia_characters": 4046,
+      "edit_distance": 358
+    },
+    {
+      "source_index": 203,
+      "osx_characters": 925,
+      "nvidia_characters": 962,
+      "edit_distance": 47
+    },
+    {
+      "source_index": 204,
+      "osx_characters": 1501,
+      "nvidia_characters": 1611,
+      "edit_distance": 114
+    },
+    {
+      "source_index": 205,
+      "osx_characters": 617,
+      "nvidia_characters": 4178,
+      "edit_distance": 3581
+    },
+    {
+      "source_index": 206,
+      "osx_characters": 583,
+      "nvidia_characters": 613,
+      "edit_distance": 34
+    },
+    {
+      "source_index": 207,
+      "osx_characters": 777,
+      "nvidia_characters": 834,
+      "edit_distance": 57
+    },
+    {
+      "source_index": 208,
+      "osx_characters": 2343,
+      "nvidia_characters": 2440,
+      "edit_distance": 123
+    },
+    {
+      "source_index": 209,
+      "osx_characters": 3588,
+      "nvidia_characters": 3865,
+      "edit_distance": 336
+    },
+    {
+      "source_index": 210,
+      "osx_characters": 385,
+      "nvidia_characters": 418,
+      "edit_distance": 33
+    },
+    {
+      "source_index": 211,
+      "osx_characters": 1122,
+      "nvidia_characters": 1225,
+      "edit_distance": 110
+    },
+    {
+      "source_index": 212,
+      "osx_characters": 789,
+      "nvidia_characters": 830,
+      "edit_distance": 57
+    },
+    {
+      "source_index": 213,
+      "osx_characters": 1196,
+      "nvidia_characters": 1245,
+      "edit_distance": 69
+    },
+    {
+      "source_index": 214,
+      "osx_characters": 1108,
+      "nvidia_characters": 1168,
+      "edit_distance": 74
+    },
+    {
+      "source_index": 215,
+      "osx_characters": 819,
+      "nvidia_characters": 893,
+      "edit_distance": 74
+    },
+    {
+      "source_index": 216,
+      "osx_characters": 1062,
+      "nvidia_characters": 1116,
+      "edit_distance": 84
+    },
+    {
+      "source_index": 217,
+      "osx_characters": 486,
+      "nvidia_characters": 488,
+      "edit_distance": 30
+    },
+    {
+      "source_index": 218,
+      "osx_characters": 1068,
+      "nvidia_characters": 1149,
+      "edit_distance": 83
+    },
+    {
+      "source_index": 219,
+      "osx_characters": 544,
+      "nvidia_characters": 572,
+      "edit_distance": 51
+    },
+    {
+      "source_index": 220,
+      "osx_characters": 3624,
+      "nvidia_characters": 3838,
+      "edit_distance": 257
+    },
+    {
+      "source_index": 221,
+      "osx_characters": 1277,
+      "nvidia_characters": 1332,
+      "edit_distance": 76
+    },
+    {
+      "source_index": 222,
+      "osx_characters": 513,
+      "nvidia_characters": 569,
+      "edit_distance": 56
+    },
+    {
+      "source_index": 223,
+      "osx_characters": 912,
+      "nvidia_characters": 1002,
+      "edit_distance": 98
+    },
+    {
+      "source_index": 224,
+      "osx_characters": 1157,
+      "nvidia_characters": 1221,
+      "edit_distance": 69
+    },
+    {
+      "source_index": 225,
+      "osx_characters": 942,
+      "nvidia_characters": 1648,
+      "edit_distance": 784
+    },
+    {
+      "source_index": 226,
+      "osx_characters": 574,
+      "nvidia_characters": 602,
+      "edit_distance": 46
+    },
+    {
+      "source_index": 227,
+      "osx_characters": 595,
+      "nvidia_characters": 640,
+      "edit_distance": 53
+    },
+    {
+      "source_index": 228,
+      "osx_characters": 1004,
+      "nvidia_characters": 1093,
+      "edit_distance": 91
+    },
+    {
+      "source_index": 229,
+      "osx_characters": 863,
+      "nvidia_characters": 917,
+      "edit_distance": 64
+    },
+    {
+      "source_index": 230,
+      "osx_characters": 1068,
+      "nvidia_characters": 1132,
+      "edit_distance": 82
+    },
+    {
+      "source_index": 231,
+      "osx_characters": 1146,
+      "nvidia_characters": 1219,
+      "edit_distance": 87
+    },
+    {
+      "source_index": 232,
+      "osx_characters": 635,
+      "nvidia_characters": 674,
+      "edit_distance": 39
+    },
+    {
+      "source_index": 233,
+      "osx_characters": 333,
+      "nvidia_characters": 822,
+      "edit_distance": 507
+    },
+    {
+      "source_index": 234,
+      "osx_characters": 3626,
+      "nvidia_characters": 3815,
+      "edit_distance": 260
+    },
+    {
+      "source_index": 235,
+      "osx_characters": 1973,
+      "nvidia_characters": 4877,
+      "edit_distance": 3031
+    },
+    {
+      "source_index": 236,
+      "osx_characters": 4454,
+      "nvidia_characters": 4825,
+      "edit_distance": 398
+    },
+    {
+      "source_index": 237,
+      "osx_characters": 165,
+      "nvidia_characters": 775,
+      "edit_distance": 615
+    },
+    {
+      "source_index": 238,
+      "osx_characters": 793,
+      "nvidia_characters": 2187,
+      "edit_distance": 1578
+    },
+    {
+      "source_index": 239,
+      "osx_characters": 619,
+      "nvidia_characters": 658,
+      "edit_distance": 41
+    },
+    {
+      "source_index": 240,
+      "osx_characters": 3882,
+      "nvidia_characters": 4147,
+      "edit_distance": 273
+    },
+    {
+      "source_index": 241,
+      "osx_characters": 345,
+      "nvidia_characters": 506,
+      "edit_distance": 185
+    },
+    {
+      "source_index": 242,
+      "osx_characters": 4426,
+      "nvidia_characters": 4705,
+      "edit_distance": 337
+    },
+    {
+      "source_index": 243,
+      "osx_characters": 4359,
+      "nvidia_characters": 4650,
+      "edit_distance": 353
+    },
+    {
+      "source_index": 244,
+      "osx_characters": 543,
+      "nvidia_characters": 970,
+      "edit_distance": 453
+    },
+    {
+      "source_index": 245,
+      "osx_characters": 578,
+      "nvidia_characters": 615,
+      "edit_distance": 37
+    },
+    {
+      "source_index": 246,
+      "osx_characters": 212,
+      "nvidia_characters": 362,
+      "edit_distance": 189
+    },
+    {
+      "source_index": 247,
+      "osx_characters": 306,
+      "nvidia_characters": 685,
+      "edit_distance": 411
+    },
+    {
+      "source_index": 248,
+      "osx_characters": 452,
+      "nvidia_characters": 1462,
+      "edit_distance": 1035
+    },
+    {
+      "source_index": 249,
+      "osx_characters": 431,
+      "nvidia_characters": 4628,
+      "edit_distance": 4207
+    }
+  ],
+  "definite_valid_intersection": {
+    "source_pairs": 231,
+    "excluded_osx_sources": 18,
+    "identical_pairs": 1,
+    "osx_characters": 1199529,
+    "nvidia_characters": 1322185,
+    "total_edit_distance": 240913,
+    "distance_divided_by_osx_characters": 0.20083966290102198,
+    "distance_divided_by_max_character_total": 0.18220823863528932,
+    "per_source_distance": {
+      "mean": 1042.9134199134198,
+      "p50": 88.0,
+      "p90": 1777.0,
+      "p95": 8992.0,
+      "p99": 13735.399999999989,
+      "maximum": 17905
+    }
+  }
+}

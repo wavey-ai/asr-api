@@ -1,402 +1,441 @@
 # asr-api
 
-[`asr-api`](https://github.com/wavey-ai/asr-api) provides a
-Deepgram-compatible `/v1/listen` API for ASR backends including Cohere
-Transcribe and Parakeet/TDT. It supports buffered HTTP uploads, streaming HTTP
-request bodies, WebSocket audio, and WebTransport over HTTP/3. It normalizes
-input audio to mono `16 kHz` PCM, runs inference through the configured backend,
-and returns Deepgram-compatible JSON.
+`asr-api` provides a Deepgram-compatible `/v1/listen` speech recognition API.
+It supports Cohere Transcribe and NVIDIA Parakeet backends.
 
-## Useful For
+The service accepts buffered and streaming audio. It returns
+Deepgram-compatible transcripts, words, utterances, and paragraphs.
 
-- Deepgram-compatible ASR where clients send buffered HTTP uploads, streaming
-  HTTP request bodies, WebSocket audio, or WebTransport over HTTP/3 to
-  `/v1/listen`.
-- GPU service experiments where ingress, decode, model execution, and response
-  collection need to be measured as separate stages.
-- Production-style benchmarking of Cohere Transcribe on Ada-class NVIDIA GPUs
-  with ONNX Runtime, CUDA EP, TensorRT EP, and TensorRT engine caches.
-- Apple Silicon development with a native MLX backend while keeping ONNX as the
-  default serving path.
-- Media research pipelines that resolve/download audio elsewhere, chunk it, and
-  use ASR output as an intermediate artifact for structured notes, product
-  analysis, search indexes, or QA.
+## Supported Transports
+
+The service supports these `/v1/listen` transports:
+
+- buffered HTTP uploads over HTTP/2;
+- streaming HTTP request bodies;
+- WebSocket audio;
+- WebTransport over HTTP/3.
+
+The service converts input audio to mono `16 kHz` `f32` PCM before inference.
 
 ## Architecture
 
-The runtime has three roles:
+The service separates transport, audio decoding, and model inference.
 
-1. `ingress`: accepts `/v1/listen` through the enabled `web-service`
-   transports, including buffered HTTP uploads, streaming HTTP request bodies,
-   WebSocket audio, and WebTransport over HTTP/3. It writes request bytes and
-   metadata into
-   [`upload-response`](https://github.com/wavey-ai/web-services/tree/main/upload-response)
-   and waits for a worker response.
-2. `decoder`: CPU processing stage. It discovers ingress origins, claims raw
-   request streams, decodes/resamples/downmixes them to mono `16 kHz` `f32`,
-   and writes canonical PCM to the `decoded` stage lane.
-3. `worker`: model stage. It discovers ingress origins, claims decoded streams,
-   runs Cohere inference through ONNX Runtime or MLX, and writes the final
-   Deepgram-compatible response back to the owning ingress process.
+```text
+Client
+  |
+  |  /v1/listen
+  v
+Ingress -- raw request --> Decoder -- mono 16 kHz f32 --> Worker
+  ^                                                       |
+  |                                                       |
+  +----------- Deepgram-compatible response -------------+
+```
 
-This design keeps model libraries out of ingress. It keeps audio codec work off
-the GPU worker. It also shows worker throughput at the cache/stage boundary.
-The handoff is
+### Runtime Roles
+
+| Role | Responsibility |
+| --- | --- |
+| `ingress` | Accept requests and store request streams. Return worker responses to clients. |
+| `decoder` | Claim request streams. Decode, downmix, and resample audio. |
+| `worker` | Claim decoded PCM. Run the selected ASR backend. Build the API response. |
+
+The roles exchange data through
 [`upload-response`](https://github.com/wavey-ai/web-services/tree/main/upload-response).
-There is no Redis sidecar or external queue.
+Each ingress process owns an in-memory stream cache.
 
-See [ASR Capability Inventory](docs/asr-capability-inventory.md) for the
-current Cohere and Parakeet backend capability matrix.
+Decoder and worker processes discover ingress origins through URLs or DNS.
+They claim work from the cache and write results to stage lanes.
 
-## Build
+The service does not require Redis or an external message queue.
 
-Default service build, Cohere ONNX plus audio decode:
+### Request Flow
 
-```bash
-cargo build --no-default-features --features cohere-backend,audio-decoder
+1. Ingress stores the request headers and body.
+2. A decoder claims the raw request stream.
+3. The decoder converts the audio to canonical PCM.
+4. The decoder writes PCM to the `decoded` stage lane.
+5. A worker claims the decoded stream.
+6. The worker divides PCM into overlapping windows.
+7. The selected backend transcribes each window.
+8. Rust combines stable words across window boundaries.
+9. The worker writes the final response.
+10. Ingress returns the response to the client.
+
+The default window is `30` seconds. The default overlap is `2` seconds.
+The worker does not commit words from the unstable overlap region.
+
+### Runtime Ownership
+
+Rust owns the service and model control flow.
+Model tensor operations use ONNX Runtime or MLX.
+
+| Layer | Owner |
+| --- | --- |
+| HTTP, WebSocket, and WebTransport | Rust `web-service` integration |
+| Request and response handoff | Rust `upload-response` integration |
+| Codec decode and resampling | Rust SoundKit integration |
+| Windowing and overlap removal | Rust |
+| Cohere and Parakeet mel features | Rust |
+| ONNX session scheduling | Rust |
+| Token generation loops | Rust, except the Cohere MLX loop |
+| Word timestamp mapping | Rust |
+| Parakeet and Cohere ONNX graphs | ONNX Runtime execution providers |
+| Cohere Apple GPU graph | Swift and MLX, controlled by Rust |
+
+Python is required for model export and validation only.
+Python is not part of the serving process.
+
+## Backend Selection
+
+`ASR_MODEL_PROVIDER` selects the model family.
+`ASR_COHERE_BACKEND` selects the Cohere runtime.
+
+| Provider | Runtime | Cargo feature | Execution engine |
+| --- | --- | --- | --- |
+| Cohere | ONNX | `cohere-backend` | CPU, CUDA, TensorRT, or CoreML |
+| Cohere | MLX | `cohere-mlx` | Apple MLX and Metal |
+| Parakeet TDT | ONNX | `parakeet-backend` | CPU, CUDA, or TensorRT |
+
+`ASR_MODEL_PROVIDER=auto` selects Cohere.
+Cohere ONNX is the default when the build contains `cohere-backend`.
+
+## Parakeet TDT Runtime
+
+The serving model is NVIDIA Parakeet TDT 0.6B v3.
+The export process loads the NeMo model and writes five ONNX graphs.
+
+| File | Function |
+| --- | --- |
+| `encoder.onnx` | Convert a complete mel window into acoustic frames. |
+| `decoder.onnx` | Run the recurrent prediction network. Update its hidden states. |
+| `joint.enc.onnx` | Project encoder output into the joint-network space. |
+| `joint.pred.onnx` | Project decoder output into the joint-network space. |
+| `joint.joint_net.onnx` | Produce token and duration logits. |
+
+The exporter also writes `tokens.txt`, `vocab.txt`, and `export.json`.
+See [`../asr-onnx/export/export_parakeet_tdt.py`](../asr-onnx/export/export_parakeet_tdt.py).
+
+### Parakeet Frontend
+
+Rust computes the NeMo-compatible frontend with `mel-spec`.
+The frontend includes these operations:
+
+- pre-emphasis;
+- centered FFT frames;
+- Slaney mel filters;
+- log energy;
+- per-feature normalization;
+- sparse filterbank projection;
+- reusable FFT scratch storage.
+
+The default shape uses `128` mel features.
+The default FFT size is `512` samples.
+The window is `400` samples, and the hop is `160` samples.
+
+### Parakeet Decode
+
+Rust runs the TDT decode policy around the ONNX graphs:
+
+1. Run the encoder for the complete feature window.
+2. Run the joint encoder projection once.
+3. Initialize the recurrent decoder states.
+4. Run the decoder for the current token.
+5. Run the joint predictor projection.
+6. Combine the encoder and predictor projections.
+7. Select the token and duration with argmax.
+8. Advance acoustic time by the predicted duration.
+9. Repeat until the encoded window is complete.
+10. Convert token emission positions to word timestamps.
+
+`asr-onnx` creates one session pool for each device.
+It can create multiple sessions for each device.
+The pool distributes jobs across devices and sessions.
+
+TensorRT selection is available for each split component.
+The default `asr-onnx` TensorRT set is `encoder,joint_enc`.
+
+See [`../asr-onnx/src/lib.rs`](../asr-onnx/src/lib.rs) for the decode loop.
+
+## Parakeet CTC Runtime
+
+Parakeet CTC is a separate ONNX path.
+It can transcribe audio or align an existing Cohere transcript.
+
+```text
+Rust mel frontend
+  -> Parakeet CTC ONNX
+  -> frame token logits
+  -> Rust greedy decode or forced alignment
+  -> timed words
 ```
 
-Apple Silicon MLX build:
+The Cohere side-channel uses forced alignment.
+Rust tokenizes the Cohere transcript and aligns it to CTC frames.
 
-```bash
-cd apple && swift build -c release && cd ..
+The direct CTC path uses greedy token collapse.
+It then converts token spans to word spans.
 
-MACOSX_DEPLOYMENT_TARGET=14.0 \
-  cargo build --release --no-default-features --features cohere-mlx,audio-decoder \
-  --bin cohere-debug
-```
+The server target is the full-float `onnx/model.onnx` artifact.
+Use CUDA or validated TensorRT settings on NVIDIA hosts.
 
-Parakeet ONNX/TDT build:
+Do not enable CTC TensorRT FP16 without model-specific validation.
+Tested FP16 paths produced non-finite logits on the current runtime.
 
-```bash
-cargo build --no-default-features --features parakeet-backend,audio-decoder
-```
+See [`src/ctc_align.rs`](src/ctc_align.rs).
 
-Backends can be compiled together. Cohere ONNX remains the default runtime
-unless `ASR_MODEL_PROVIDER` or `ASR_COHERE_BACKEND` selects another path.
+## Cohere ONNX Runtime
+
+The serving model is Cohere Transcribe 03-2026.
+The exporter separates the model into three runtime graphs.
+
+| File | Function |
+| --- | --- |
+| `encoder.onnx` | Convert mel features into acoustic hidden states. |
+| `decoder_prefill.onnx` | Process the control prompt. Create self-attention and cross-attention caches. |
+| `decoder_cached_step.onnx` | Generate one token from the current caches. |
+
+The exporter also writes tokenizer, generation, processor, and model metadata.
+See [`../asr-onnx/export/export_cohere_transcribe.py`](../asr-onnx/export/export_cohere_transcribe.py).
+
+### Cohere Frontend
+
+Rust reads `preprocessor_config.json` and computes Cohere-compatible features.
+The frontend uses a Hann window, pre-emphasis, Slaney filters, and normalization.
+
+Rust uses the same frontend for Cohere ONNX and Cohere MLX.
+This rule prevents frontend differences between the two runtimes.
+
+### Cohere Decode
+
+Rust controls the ONNX generation sequence:
+
+1. Run `encoder.onnx` for the feature window.
+2. Build the language and punctuation prompt.
+3. Run `decoder_prefill.onnx` for the complete prompt.
+4. Extract the first token and all decoder caches.
+5. Run `decoder_cached_step.onnx` for one token.
+6. Replace each self-attention cache with its new value.
+7. Reuse the cross-attention caches.
+8. Stop at EOS or the configured token limit.
+9. Decode token identifiers with `tokenizer.json`.
+
+Each ONNX component can use a different execution provider.
+CUDA remains the fallback when TensorRT does not own a component.
+
+See [`src/cohere.rs`](src/cohere.rs).
+
+### Cohere Timestamps
+
+Cohere does not expose a duration or CTC head in this serving path.
+The default mode estimates word times from generated token positions.
+
+Set `ASR_COHERE_TIMESTAMP_BACKEND=parakeet-ctc` for model-derived boundaries.
+This mode runs the Parakeet CTC side-channel after Cohere decode.
+
+The token-frequency mode is monotonic but approximate.
+The Parakeet CTC mode gives more accurate word boundaries.
+
+## Cohere MLX Runtime
+
+The Apple path uses an owned Swift and MLX implementation.
+It does not use `cohere-transcribe-rs` or a vendored `mlx-c` runtime.
+
+Rust remains the service owner:
+
+1. Rust computes the Cohere mel features.
+2. Rust writes one contiguous little-endian `f32` feature tensor.
+3. Rust sends a JSON request to the persistent Swift process.
+4. Swift loads the feature tensor into MLX.
+5. MLX runs the Conformer encoder.
+6. MLX precomputes decoder cross-attention caches.
+7. MLX runs cached autoregressive decoding.
+8. Swift returns token identifiers and text.
+9. Rust creates the final timestamps and API response.
+
+The Rust worker starts one persistent Swift process.
+The Swift process loads `model.safetensors` once.
+Requests use newline-delimited JSON over standard input and output.
+
+The default path uses BF16-oriented model execution.
+Optional weight-only quantization uses MLX `quantizedMM`.
+
+Use one MLX worker on a small Apple Silicon system.
+Each additional worker loads another complete model copy.
+
+See [`src/cohere_mlx.rs`](src/cohere_mlx.rs) and
+[`apple/Sources/AsrMLXRuntime/CohereGraph.swift`](apple/Sources/AsrMLXRuntime/CohereGraph.swift).
+
+Parakeet MLX is not implemented.
 
 ## Model Artifacts
 
-`ASR_MODEL_DIR` is required only for `worker`.
+Set `ASR_MODEL_DIR` only for the `worker` role.
 
-Cohere ONNX expects:
+### Cohere ONNX Bundle
 
-- `encoder.onnx`
-- `encoder.onnx.data`
-- `decoder_prefill.onnx`
-- `decoder_prefill.onnx.data`
-- `decoder_cached_step.onnx`
-- `decoder_cached_step.onnx.data`
-- `tokenizer.json`
-- `tokenizer.model`
-- `config.json`
-- `generation_config.json`
-- `preprocessor_config.json`
+The runtime requires these files:
 
-Cohere MLX expects a local copy of
-[`CohereLabs/cohere-transcribe-03-2026`](https://huggingface.co/CohereLabs/cohere-transcribe-03-2026)
-from Hugging Face. Use a Hugging Face login that has access to Cohere's gated
-model, then point `ASR_MODEL_DIR` at that directory.
+- `encoder.onnx` and `encoder.onnx.data`;
+- `decoder_prefill.onnx` and `decoder_prefill.onnx.data`;
+- `decoder_cached_step.onnx` and `decoder_cached_step.onnx.data`;
+- `tokenizer.json` and `tokenizer.model`;
+- `config.json`;
+- `generation_config.json`;
+- `preprocessor_config.json`.
 
-The local directory should contain:
+### Cohere MLX Bundle
 
-- `model.safetensors`
-- `config.json`
-- `preprocessor_config.json`
-- `tokenizer.model`
-- `vocab.json`
+The runtime requires these files:
 
-The `cohere-mlx` Rust backend starts the Swift runtime under `apple/` as a
-persistent child process. The model is loaded once per worker and subsequent
-audio windows use a newline-delimited request/response protocol over standard
-input and output. Build that package with `swift build -c release` or set
-`ASR_MLX_TRANSCRIBE_BIN`. The Swift package contains the Cohere encoder/decoder
-MLX graph used by the local Apple Silicon runtime.
+- `model.safetensors`;
+- `config.json`;
+- `preprocessor_config.json`;
+- `vocab.json`;
+- `tokenizer_config.json`.
 
-Parakeet ONNX/TDT expects:
+`tokenizer.model` is the source for generated `vocab.json` data.
+Keep it when the host must rebuild the MLX bundle.
 
-- `encoder.onnx`
-- `decoder.onnx`
-- `joint.enc.onnx`
-- `joint.pred.onnx`
-- `joint.joint_net.onnx`
-- `tokens.txt`
-
-The ONNX and MLX artifacts can live in the same model directory when a host
-needs both paths. Download and prepare the MLX directory with the setup script:
+Prepare the MLX model directory with this command:
 
 ```bash
 scripts/setup-cohere-mlx-model.sh --login
 ```
 
-The script downloads
-[`CohereLabs/cohere-transcribe-03-2026`](https://huggingface.co/CohereLabs/cohere-transcribe-03-2026),
-writes `vocab.json` from the downloaded `tokenizer.model`, and verifies the
-files the MLX runtime loads. If you have already logged in to Hugging Face or
-set `HF_TOKEN`, omit `--login`.
+Omit `--login` when Hugging Face authentication is already available.
 
-Model payloads are not checked into Git. For hosts that still use the Wavey
-bucket mirror, seed or update the Cohere bundle with:
+### Parakeet TDT Bundle
+
+The runtime requires these files:
+
+- `encoder.onnx`;
+- `decoder.onnx`;
+- `joint.enc.onnx`;
+- `joint.pred.onnx`;
+- `joint.joint_net.onnx`;
+- `tokens.txt`.
+
+The ONNX files can refer to external `.onnx.data` files.
+Keep those data files beside their ONNX files.
+
+### Parakeet CTC Bundle
+
+The side-channel requires these files:
+
+- `config.json`;
+- `preprocessor_config.json`;
+- `tokenizer.json`;
+- the selected ONNX graph.
+
+The default graph path is `onnx/model.onnx`.
+
+### Bucket Synchronization
+
+Model payloads are not stored in Git.
+Use the model synchronization script on hosts that use the Wavey mirror:
 
 ```bash
-AWS_ACCESS_KEY_ID=... \
-AWS_SECRET_ACCESS_KEY=... \
 scripts/sync-model-from-bucket.sh \
   --model cohere-transcribe-03-2026 \
   --dest /var/lib/asr-api/models/cohere-transcribe-03-2026
 ```
 
-The sync helper records remote object metadata in the destination and skips the
-download when the local bundle is current.
+The script records remote metadata in the destination.
+It skips the transfer when the local bundle is current.
 
-## Runtime Configuration
+## Build
 
-Core service:
-
-- `ASR_API_ROLE`: `ingress`, `decoder`, or `worker`
-- `PORT`: TLS port, default `8443`
-- `ENABLE_H3`: enable HTTP/3 in addition to HTTP/2
-- `TLS_CERT_PATH` / `TLS_KEY_PATH`: optional PEM paths. If omitted the
-  workspace default local TLS material is used
-- `ASR_MODEL_DIR`: model directory, required for `worker`
-- `ASR_DEVICE_IDS`: comma-separated GPU ids, default `0`
-- `ASR_ONNX_SESSIONS`: ONNX sessions per device, default `1`
-- `ASR_COHERE_MAX_NEW_TOKENS`: generation cap, default `384`
-- `ASR_WORKER_COUNT`: local-orchestrator worker process count, default `1`
-- `RUST_LOG`: tracing filter, default `info`
-- `ASR_LOG_FORMAT`: `json`, `pretty`, or `compact`, default `json`
-
-Audio/chunking:
-
-- `CHUNK_SECONDS`: transcription window length, default `30`
-- `OVERLAP_SECONDS`: overlap between adjacent windows, default `2`
-- `FINAL_MIN_SECONDS`: minimum residual tail to keep, default `0.5`
-- `UTT_SPLIT_SECONDS`: pause threshold used when `utterances=true`, default
-  `0.8`
-
-Backend selection and ONNX Runtime:
-
-- `ASR_MODEL_PROVIDER`: `auto`, `cohere`, or `parakeet`. Default `auto`
-- `ASR_COHERE_BACKEND`: `onnx` or `mlx`, default `onnx`
-- `ASR_ONNX_RUNTIME_LIB` / `ORT_DYLIB_PATH`: explicit ONNX Runtime dynamic
-  library path
-- `ASR_COHERE_FORCE_CPU`: force ONNX CPU EP for compare/debug runs
-- `ASR_COHERE_TIMINGS`: emit per-window Cohere timing lines to stderr
-- `ASR_COHERE_INTRA_THREADS`: ONNX intra-op threads. On macOS, unset lets ONNX
-  Runtime choose its default pool. On other platforms unset preserves the
-  previous single-thread behavior. Set `0` to skip explicit thread setting.
-- `ASR_COHERE_PARALLEL_EXECUTION`: enable ONNX Runtime graph-level parallel
-  execution
-- `ASR_COHERE_INTER_THREADS`: ONNX inter-op threads when graph-level parallel
-  execution is enabled
-
-Parakeet:
-
-- `ASR_ONNX_FORCE_CPU`: force the Parakeet ONNX/TDT path to CPU EP
-- `ASR_PARAKEET_TIMINGS`: emit per-window Parakeet timing lines to stderr
-- `ASR_PARAKEET_N_MELS`: default comes from `asr-onnx` config, currently `128`
-- `ASR_PARAKEET_N_FFT`: default `512`
-- `ASR_PARAKEET_WIN_LENGTH`: default `400`
-- `ASR_PARAKEET_HOP_LENGTH`: default `160`
-- `ASR_PARAKEET_PAD_TO`: default `0`. Set `16` to mimic NeMo padding
-
-Cohere word timestamps default to a generated-token frequency estimate. They
-are monotonic and suitable for Deepgram-compatible `words` output, but they are
-not model-derived CTC/TDT alignments.
-
-Cohere ONNX can instead attach a Parakeet CTC ONNX forced-alignment
-side-channel:
-
-- `ASR_COHERE_TIMESTAMP_BACKEND`: `token-frequency` or `parakeet-ctc`
-- `ASR_CTC_ALIGN_MODEL_DIR`: Parakeet CTC ONNX model directory
-- `ASR_CTC_ALIGN_ONNX_FILE`: default `onnx/model.onnx`
-- `ASR_CTC_ALIGN_EXECUTION_PROVIDER`: `auto`, `tensorrt`, `cuda`, or `cpu`
-- `ASR_CTC_ALIGN_FORCE_CPU`: force CPU for local/macOS validation
-- `ASR_CTC_ALIGN_TRT_CACHE_DIR`: TensorRT engine/timing cache directory
-- `ASR_CTC_ALIGN_TRT_MIN_DURATION_S`, `ASR_CTC_ALIGN_TRT_OPT_DURATION_S`,
-  `ASR_CTC_ALIGN_TRT_MAX_DURATION_S`: TensorRT dynamic-shape profile window
-- `ASR_CTC_ALIGN_TRT_WORKSPACE_BYTES`: default `8 GiB`
-- `ASR_CTC_ALIGN_TRT_FP16`: default disabled. Enable only after validating
-  finite logits for the specific CTC ONNX graph/runtime
-- `ASR_CTC_ALIGN_TIMINGS`: emit CTC aligner timing/debug lines to stderr
-
-The local macOS validation path uses ONNX Runtime CPU. TensorRT is not a macOS
-path. Build and benchmark TensorRT engines on a supported NVIDIA/CUDA host. The
-NVIDIA TensorRT support matrix lists Linux, Windows, SBSA, and JetPack targets,
-and no macOS target:
-https://docs.nvidia.com/deeplearning/tensorrt/latest/getting-started/support-matrix.html
-
-The local CPU validation path used `onnx/model_int8.onnx` from
-`onnx-community/parakeet-ctc-0.6b-ONNX`. That int8/QDQ graph is not the server
-performance target: use the default full-float `onnx/model.onnx` for CUDA or
-TensorRT. `onnx/model_q4f16.onnx` and `onnx/model_fp16.onnx` produced all-NaN
-logits in validation, and TensorRT FP16 builder mode also produced all-NaN
-logits for this graph/runtime.
-
-Validate Cohere timestamps against Parakeet/TDT:
-
-```bash
-ASR_ONNX_RUNTIME_LIB=/opt/homebrew/lib/libonnxruntime.dylib \
-ASR_COHERE_FORCE_CPU=true \
-ASR_ONNX_FORCE_CPU=true \
-ASR_COHERE_TIMESTAMP_BACKEND=parakeet-ctc \
-ASR_CTC_ALIGN_MODEL_DIR=models/parakeet-ctc-0.6b-onnx \
-ASR_CTC_ALIGN_ONNX_FILE=onnx/model_int8.onnx \
-ASR_CTC_ALIGN_FORCE_CPU=true \
-cargo run --no-default-features \
-  --features cohere-backend,parakeet-backend,audio-decoder \
-  --bin timestamp-validate -- \
-  --cohere-model-dir models/cohere-transcribe-03-2026 \
-  --parakeet-model-dir models/parakeet-tdt-0.6b-v3 \
-  --audio-path ../whisper.cpp/samples/jfk.wav \
-  --device-ids ''
-```
-
-CoreML / Apple ONNX:
-
-- `ASR_COHERE_COREML`: request CoreML EP
-- `ASR_COHERE_EXECUTION_PROVIDER`: `coreml`, `metal`, or `apple` also requests
-  CoreML EP
-- `ASR_COHERE_COREML_COMPUTE_UNITS`: `cpu-and-gpu`, `all`,
-  `cpu-and-neural-engine`, or `cpu-only`
-- `ASR_COHERE_COREML_CACHE_DIR`: CoreML model cache path
-- `ASR_COHERE_COREML_LOW_PRECISION_ACCUMULATION_ON_GPU`: enable CoreML low
-  precision accumulation
-
-TensorRT:
-
-- `ASR_COHERE_TRT_COMPONENTS`: comma-separated `encoder`, `decoder_prefill`,
-  `decoder_cached_step`, `all`, or `none`
-- `ASR_COHERE_TRT_CACHE_DIR`: TensorRT engine cache path, default
-  `$ASR_MODEL_DIR/.trt_cache`
-- `ASR_COHERE_TRT_PROFILE_MIN_S`
-- `ASR_COHERE_TRT_PROFILE_OPT_S`
-- `ASR_COHERE_TRT_PROFILE_MAX_S` or `ASR_COHERE_TRT_PROFILE_SECONDS`
-- `ASR_COHERE_TRT_PROFILE_MIN_FRAMES`
-- `ASR_COHERE_TRT_PROFILE_OPT_FRAMES`
-- `ASR_COHERE_TRT_PROFILE_MAX_FRAMES`
-- `ASR_COHERE_TRT_WORKSPACE_BYTES`: default `4 GiB`
-- `ASR_COHERE_TRT_BUILDER_OPT_LEVEL`: default `5`
-- `ASR_COHERE_TRT_FP16`: default enabled
-- `ASR_COHERE_TRT_DETAILED_BUILD_LOG`: verbose TensorRT build logging
-
-`upload-response`:
-
-- `UPLOAD_RESPONSE_NUM_STREAMS`: in-memory stream slots, default `16`
-- `UPLOAD_RESPONSE_SLOT_SIZE_KB`: per-slot cache size, default `32`
-- `UPLOAD_RESPONSE_SLOTS_PER_STREAM`: slots per stream, default `1024`
-- `UPLOAD_RESPONSE_TIMEOUT_MS`: listen timeout, default `30000`
-- `UPLOAD_RESPONSE_WATCH_POLL_MS`: ingress response watcher poll interval,
-  default `1`
-- `UPLOAD_RESPONSE_WORKER_POLL_MS`: worker poll interval, default `2`
-- `UPLOAD_RESPONSE_MAX_INFLIGHT`: max simultaneously claimed streams per
-  worker process, default `2`
-- `UPLOAD_RESPONSE_WORKER_ID`: worker identity for cache claims
-- `UPLOAD_RESPONSE_WORKER_ID_PREFIX`: local-orchestrator worker id prefix
-- `UPLOAD_RESPONSE_INGRESS_URLS`: comma-separated ingress origins for worker
-  mode
-- `UPLOAD_RESPONSE_DISCOVERY_DNS`: optional `host:port` to resolve into ingress
-  origins
-- `UPLOAD_RESPONSE_DISCOVERY_INTERVAL_MS`: discovery refresh interval, default
-  `2000`
-- `UPLOAD_RESPONSE_INSECURE_TLS`: allow internal/self-signed TLS for worker
-  mode
-
-## Local Runs
-
-Build a release debug binary for local Cohere benchmarking:
+### Cohere ONNX
 
 ```bash
 cargo build --release --no-default-features \
   --features cohere-backend,audio-decoder \
-  --bin cohere-debug
+  --bin asr-api --bin local-orchestrator --bin cohere-debug
 ```
 
-CPU ONNX compare run:
+### Parakeet TDT
 
 ```bash
-ASR_ONNX_RUNTIME_LIB=/opt/homebrew/lib/libonnxruntime.dylib \
-ASR_COHERE_FORCE_CPU=true \
-ASR_COHERE_TIMINGS=true \
-  target/release/cohere-debug \
-  --model-dir models/cohere-transcribe-03-2026 \
-  --audio-path ../whisper.cpp/samples/jfk.wav \
-  --device-ids '' \
-  --max-new-tokens 64 \
-  --warmup 1 \
-  --repeat 5
+cargo build --release --no-default-features \
+  --features parakeet-backend,audio-decoder \
+  --bin asr-api --bin local-orchestrator
 ```
 
-Apple ONNX/CoreML path:
-
-```bash
-ASR_COHERE_BACKEND=onnx \
-ASR_COHERE_EXECUTION_PROVIDER=metal \
-ASR_COHERE_COREML_COMPUTE_UNITS=cpu-and-gpu \
-ASR_COHERE_COREML_CACHE_DIR=models/cohere-transcribe-03-2026/.coreml-cache-static \
-  target/release/cohere-debug \
-  --model-dir models/cohere-transcribe-03-2026 \
-  --audio-path ../whisper.cpp/samples/jfk.wav \
-  --device-ids '' \
-  --max-new-tokens 64
-```
-
-Apple MLX runtime bundle check:
+### Cohere MLX
 
 ```bash
 cd apple
 swift build -c release
-.build/release/asr-mlx-transcribe \
-  --check \
-  --model-dir ../models/cohere-transcribe-03-2026
-```
-
-Minimal Apple MLX Cohere ASR run:
-
-```bash
-cd apple && swift build -c release && cd ..
+cd ..
 
 MACOSX_DEPLOYMENT_TARGET=14.0 \
-cargo build --release --no-default-features \
+  cargo build --release --no-default-features \
   --features cohere-mlx,audio-decoder \
-  --bin cohere-debug
-
-ASR_COHERE_BACKEND=mlx \
-ASR_COHERE_TIMINGS=true \
-  target/release/cohere-debug \
-  --model-provider cohere \
-  --model-dir models/cohere-transcribe-03-2026 \
-  --audio-path ../whisper.cpp/samples/jfk.wav \
-  --device-ids '' \
-  --max-new-tokens 64 \
-  --warmup 1 \
-  --repeat 3
+  --bin asr-api --bin local-orchestrator --bin cohere-debug
 ```
 
-Local three-role stack:
+Backends can exist in the same build.
+Use runtime variables to select one backend.
+
+## Local Operation
+
+### Three-Role Orchestrator
+
+Use `local-orchestrator` to start ingress, decoder, and worker processes.
 
 ```bash
-cargo build --release --no-default-features \
-  --features cohere-backend,audio-decoder \
-  --bin asr-api --bin local-orchestrator
+target/release/local-orchestrator \
+  --model-provider cohere \
+  --model-dir models/cohere-transcribe-03-2026 \
+  --device-ids 0
+```
 
-ASR_COHERE_BACKEND=onnx \
-ASR_COHERE_EXECUTION_PROVIDER=metal \
-ASR_COHERE_COREML_COMPUTE_UNITS=cpu-and-gpu \
-ASR_COHERE_COREML_CACHE_DIR=models/cohere-transcribe-03-2026/.coreml-cache-static \
+For a CPU comparison, clear the device list and force CPU execution:
+
+```bash
+ASR_COHERE_FORCE_CPU=true \
+ASR_ONNX_RUNTIME_LIB=/opt/homebrew/lib/libonnxruntime.dylib \
   target/release/local-orchestrator \
   --model-provider cohere \
   --model-dir models/cohere-transcribe-03-2026 \
   --device-ids ''
 ```
 
-For MLX on a local 16 GB Apple Silicon host, use one worker. Additional MLX
-workers are separate processes with separate model copies, and the measured
-behavior was worse due to Metal/unified-memory contention.
+### Cohere MLX Check
 
-## Request Shapes
+Check the model bundle before you start the Rust service:
 
-Buffered upload:
+```bash
+apple/.build/release/asr-mlx-transcribe \
+  --check \
+  --model-dir models/cohere-transcribe-03-2026
+```
+
+Run the local MLX backend:
+
+```bash
+ASR_COHERE_BACKEND=mlx \
+  target/release/local-orchestrator \
+  --model-provider cohere \
+  --model-dir models/cohere-transcribe-03-2026 \
+  --device-ids ''
+```
+
+### Separate Hosts
+
+Set one role on each process with `ASR_API_ROLE`.
+
+Decoder and worker roles require one discovery setting:
+
+- `UPLOAD_RESPONSE_INGRESS_URLS` for an explicit origin list;
+- `UPLOAD_RESPONSE_DISCOVERY_DNS` for DNS discovery.
+
+Use unique `UPLOAD_RESPONSE_WORKER_ID` values for concurrent workers.
+
+## API Use
+
+### Buffered Upload
 
 ```bash
 curl --http2 -k \
@@ -405,32 +444,165 @@ curl --http2 -k \
   'https://localhost:8443/v1/listen?utterances=true&paragraphs=true&timestamps=true'
 ```
 
-Buffered responses use the Deepgram JSON shape:
+The response can contain these Deepgram-compatible fields:
 
-- `metadata`
-- `results.channels[0].alternatives[0].transcript`
-- `results.channels[0].alternatives[0].words`
-- optional `results.utterances`
-- optional `results.channels[0].alternatives[0].paragraphs`
+- `metadata`;
+- `results.channels[0].alternatives[0].transcript`;
+- `results.channels[0].alternatives[0].words`;
+- `results.utterances`;
+- `results.channels[0].alternatives[0].paragraphs`.
 
-Streaming is also supported on `/v1/listen`:
+### Streaming
 
-- request-body streaming returns newline-delimited JSON
-- WebSocket clients send binary audio frames and may send JSON control messages
-  with `type` set to `KeepAlive`, `Finalize`, or `CloseStream`
-- `interim_results=true` enables interim `Results` events.
+Streaming request bodies return newline-delimited JSON events.
 
-Correlation IDs use Wavey's snowflake generator and are propagated internally
-in `x-wavey-request-id`. If the client supplies a numeric `x-request-id`,
-`asr-api` reuses it. Otherwise ingress mints one.
+WebSocket clients send audio in binary frames.
+They can send these JSON control messages:
+
+- `KeepAlive`;
+- `Finalize`;
+- `CloseStream`.
+
+Set `interim_results=true` to receive interim `Results` events.
+
+### Request Identifiers
+
+The service propagates request identifiers in `x-wavey-request-id`.
+It reuses a numeric client `x-request-id` when one is present.
+
+The service creates a Wavey snowflake identifier when the client omits one.
+
+## Configuration
+
+Run `asr-api --help` for command-line options.
+The tables below show the principal environment variables.
+
+### Service
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `ASR_API_ROLE` | `ingress` | Select `ingress`, `decoder`, or `worker`. |
+| `PORT` | `8443` | Set the TLS port. |
+| `ENABLE_H3` | `false` | Enable HTTP/3. |
+| `TLS_CERT_PATH` | local default | Set the TLS certificate path. |
+| `TLS_KEY_PATH` | local default | Set the TLS key path. |
+| `RUST_LOG` | `info` | Set the tracing filter. |
+| `ASR_LOG_FORMAT` | `json` | Select `json`, `pretty`, or `compact`. |
+
+Set both TLS path variables or set neither variable.
+
+### Model and Windows
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `ASR_MODEL_PROVIDER` | `auto` | Select `auto`, `cohere`, or `parakeet`. |
+| `ASR_COHERE_BACKEND` | `onnx` | Select `onnx` or `mlx`. |
+| `ASR_MODEL_DIR` | none | Set the worker model directory. |
+| `ASR_DEVICE_IDS` | `0` | Set comma-separated GPU identifiers. |
+| `ASR_ONNX_SESSIONS` | `1` | Set sessions for each device. |
+| `ASR_COHERE_MAX_NEW_TOKENS` | `384` | Limit generated Cohere tokens. |
+| `CHUNK_SECONDS` | `30` | Set the transcription window. |
+| `OVERLAP_SECONDS` | `2` | Set adjacent window overlap. |
+| `FINAL_MIN_SECONDS` | `0.5` | Set the minimum final tail. |
+| `UTT_SPLIT_SECONDS` | `0.8` | Set the utterance pause threshold. |
+
+### Ingress Cache and Discovery
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `UPLOAD_RESPONSE_NUM_STREAMS` | `16` | Set concurrent stream slots. |
+| `UPLOAD_RESPONSE_SLOT_SIZE_KB` | `32` | Set bytes for each ring slot. |
+| `UPLOAD_RESPONSE_SLOTS_PER_STREAM` | `1024` | Set ring slots for each stream. |
+| `UPLOAD_RESPONSE_TIMEOUT_MS` | `30000` | Set the response timeout. |
+| `UPLOAD_RESPONSE_MAX_INFLIGHT` | `2` | Set claims for each worker process. |
+| `UPLOAD_RESPONSE_WORKER_ID` | `asr-api-worker` | Set the worker identity. |
+| `UPLOAD_RESPONSE_INGRESS_URLS` | none | Set explicit ingress origins. |
+| `UPLOAD_RESPONSE_DISCOVERY_DNS` | none | Set the discovery DNS name and port. |
+| `UPLOAD_RESPONSE_DISCOVERY_INTERVAL_MS` | `2000` | Set the discovery refresh interval. |
+| `UPLOAD_RESPONSE_INSECURE_TLS` | `false` | Allow internal self-signed TLS. |
+
+### Cohere ONNX
+
+`ASR_COHERE_MAX_NEW_TOKENS` limits generated output for each ASR window.
+Use the default value of `384` for production and representative benchmarks.
+A smaller value can truncate dense speech before the window ends.
+
+Use these variables to select an execution provider:
+
+- `ASR_COHERE_FORCE_CPU`;
+- `ASR_COHERE_COREML`;
+- `ASR_COHERE_EXECUTION_PROVIDER`;
+- `ASR_COHERE_TRT_COMPONENTS`.
+
+CoreML settings include these variables:
+
+- `ASR_COHERE_COREML_COMPUTE_UNITS`;
+- `ASR_COHERE_COREML_CACHE_DIR`;
+- `ASR_COHERE_COREML_LOW_PRECISION_ACCUMULATION_ON_GPU`.
+
+TensorRT settings include these variables:
+
+- `ASR_COHERE_TRT_CACHE_DIR`;
+- `ASR_COHERE_TRT_PROFILE_MIN_S`;
+- `ASR_COHERE_TRT_PROFILE_OPT_S`;
+- `ASR_COHERE_TRT_PROFILE_MAX_S`;
+- `ASR_COHERE_TRT_WORKSPACE_BYTES`;
+- `ASR_COHERE_TRT_BUILDER_OPT_LEVEL`;
+- `ASR_COHERE_TRT_FP16`.
+
+`ASR_COHERE_TRT_COMPONENTS` accepts these values:
+
+- `encoder`;
+- `decoder_prefill`;
+- `decoder_cached_step`;
+- `all`;
+- `none`.
+
+### Parakeet TDT
+
+The main Parakeet settings are:
+
+- `ASR_ONNX_FORCE_CPU`;
+- `ASR_ONNX_TRT_COMPONENTS`;
+- `ASR_ONNX_TRT_CACHE_DIR`;
+- `ASR_ONNX_PROFILE_MIN_S`;
+- `ASR_ONNX_PROFILE_MAX_S`;
+- `ASR_PARAKEET_N_MELS`;
+- `ASR_PARAKEET_N_FFT`;
+- `ASR_PARAKEET_WIN_LENGTH`;
+- `ASR_PARAKEET_HOP_LENGTH`;
+- `ASR_PARAKEET_PAD_TO`.
+
+### Parakeet CTC Alignment
+
+The main CTC settings are:
+
+- `ASR_COHERE_TIMESTAMP_BACKEND`;
+- `ASR_CTC_ALIGN_MODEL_DIR`;
+- `ASR_CTC_ALIGN_ONNX_FILE`;
+- `ASR_CTC_ALIGN_EXECUTION_PROVIDER`;
+- `ASR_CTC_ALIGN_FORCE_CPU`;
+- `ASR_CTC_ALIGN_TRT_CACHE_DIR`;
+- `ASR_CTC_ALIGN_TRT_MIN_DURATION_S`;
+- `ASR_CTC_ALIGN_TRT_OPT_DURATION_S`;
+- `ASR_CTC_ALIGN_TRT_MAX_DURATION_S`;
+- `ASR_CTC_ALIGN_TRT_WORKSPACE_BYTES`;
+- `ASR_CTC_ALIGN_TRT_FP16`.
 
 ## TensorRT Cache Workflow
 
-TensorRT engine caches should be built and validated on a compatible GPU host.
-Cache ids should encode the compatibility dimensions: GPU family, CUDA,
-TensorRT, ONNX Runtime, precision, components, and profile window.
+Build each TensorRT cache on a compatible NVIDIA host.
+Include these values in each cache identifier:
 
-Pull the Ada 35s Cohere cache:
+- GPU family;
+- CUDA version;
+- TensorRT version;
+- ONNX Runtime version;
+- precision;
+- selected components;
+- profile window.
+
+Pull a cache before worker startup:
 
 ```bash
 scripts/sync-trt-cache.sh pull \
@@ -439,7 +611,7 @@ scripts/sync-trt-cache.sh pull \
   --dir /var/lib/asr-api/models/cohere-transcribe-03-2026/.trt_cache_all_35s_frames
 ```
 
-Publish a cache only from the GPU host that built and validated it:
+Publish a cache only from the host that built and validated it:
 
 ```bash
 scripts/sync-trt-cache.sh push \
@@ -448,211 +620,143 @@ scripts/sync-trt-cache.sh push \
   --dir /var/lib/asr-api/models/cohere-transcribe-03-2026/.trt_cache_all_35s_frames
 ```
 
-Example Ada worker environment:
+TensorRT does not run on macOS.
+Use ONNX Runtime CPU, CoreML, or Cohere MLX on Apple systems.
 
-```bash
-ASR_COHERE_BACKEND=onnx \
-ASR_COHERE_TRT_COMPONENTS=all \
-ASR_COHERE_TRT_CACHE_DIR=/var/lib/asr-api/models/cohere-transcribe-03-2026/.trt_cache_all_35s_frames \
-ASR_COHERE_TRT_PROFILE_MAX_S=35 \
-ASR_COHERE_TRT_FP16=true
-```
+## Cache Capacity
 
-## Benchmark Interpretation
+`upload-response` uses eager ring-buffer allocation.
+Cache size changes affect memory use immediately.
 
-`Stage RTFx` is the measured load window after warmup. `Whole RTFx` includes
-prewarm, warmup, client/report overhead, and server orchestration effects.
-`Response mean` is the benchmark client's part-response mean for `asr-api`
-rows.
+The default configuration uses these values:
 
-These numbers are useful because they answer different operational questions:
+- `16` streams;
+- `32 KiB` slots;
+- `1024` slots for each stream lane.
 
-- single-session RTFx tells you whether a backend is viable for one request
-  stream
-- multi-session RTFx tells you whether a GPU can turn memory into useful
-  throughput
-- response mean tells you whether the service topology is hiding or exposing
-  model latency
-- VRAM tells you whether the topology is a production candidate or just a
-  benchmark artifact.
+Canonical mono `16 kHz` `f32` PCM uses approximately `62.5 KiB/s`.
+One default `32 MiB` lane holds approximately `8.7` minutes of PCM.
 
-## macOS MLX And ONNX Findings
+Use `2048` slots for approximately `17.5` minutes.
+Use `4096` slots for approximately `35` minutes.
 
-Hardware reported `8` physical and logical CPUs split across two macOS perf
-levels of `4` cores each.
+Ingress stores encoded request bytes in the request lane.
+The decoder stores canonical PCM in the `decoded` lane.
 
-`../whisper.cpp/samples/jfk.wav`, 11.0s audio, Cohere ONNX, Homebrew ONNX
-Runtime `1.25.1`:
+## Performance Direction
 
-| Mode | Thread config | Mean RTFx | Notes |
-| --- | --- | ---: | --- |
-| CPU | old single intra-op thread | 1.30x | 5-repeat run before thread changes |
-| CoreML/Metal | old single intra-op thread | 1.04x | `cpu-and-gpu` compute units |
-| CPU | `ASR_COHERE_INTRA_THREADS=2` | 1.60x | single sample |
-| CPU | `ASR_COHERE_INTRA_THREADS=4` | 2.21x | single sample |
-| CPU | `ASR_COHERE_INTRA_THREADS=6` | 2.03x | single sample |
-| CPU | `ASR_COHERE_INTRA_THREADS=8` | 1.60x | single sample |
-| CPU | ORT default thread pool | 3.20x | warmup 1, repeat 5 |
-| CoreML/Metal | ORT default, `cpu-and-gpu` | 2.17x | single sample |
-| CoreML/Metal | ORT default, `all` | 2.11x | single sample |
+Point-in-time measurements support these deployment choices:
 
-For the warm CPU run, the mean decode time was `3432.75ms` for 11.0s audio.
-Stage timings put most time in `encoder_run_ms`.
+- Cohere TensorRT is the NVIDIA throughput path.
+- Cohere MLX is the Apple Silicon path.
+- Use one MLX worker on a shared Apple GPU.
+- Use full-float CUDA for the current Parakeet CTC server artifact.
+- Keep Cohere ONNX CPU and CoreML paths for comparison and validation.
 
-`/tmp/asr-cohere-bench-30.wav`, 30.0s audio, CPU ORT default thread pool,
-warmup 1, repeat 3:
+On July 28, 2026, one RTX 4000 Ada host processed a metadata-defined PCM corpus.
+The corpus contained `249` sources and `42.442` hours of audio.
+All sources completed without a failure.
 
-- `mean_decode_ms=8196.49`
-- `mean_rtfx=3.66`
-- representative `encoder_run_ms` was `6414ms` to `7590ms`
+One worker used two TensorRT sessions and three concurrent requests.
+The run reached `78.370x` effective realtime and `75.409x` lifecycle-inclusive realtime.
+Median GPU utilization was `82%`, and maximum GPU memory was `9,662 MiB`.
 
-The ONNX/CoreML path did not meet a `10x` real-time local target. Removing the
-one-thread cap helped substantially, but this export remained encoder-bound.
+Effective `RTFx` is batch audio duration divided by benchmark duration.
+The measured rate equals `1,880.9` audio hours for each day.
+A `70%` planning rate equals `1,316.6` audio hours for each day.
+These rates do not state the supported number of simultaneous live connections.
 
-`../whisper.cpp/samples/jfk.wav`, 11.0s audio, Cohere MLX, release build,
-`ASR_COHERE_BACKEND=mlx`, `ASR_COHERE_TIMINGS=true`, `--max-new-tokens 128`:
+The run used a benchmark-specific `128`-token limit.
+Six model invocations reached that limit.
+Use the production default of `384` for representative tests.
 
-| Runtime | Shape | Timing | RTFx | Notes |
-| --- | --- | ---: | ---: | --- |
-| `asr-api` MLX | init | `14513.94ms` | - | model load and backend setup |
-| `asr-api` MLX | warmup 1 | `9409.93ms` | `1.17x` | includes cold Metal compilation |
-| `asr-api` MLX | repeat 1 | `2191.12ms` | `5.02x` | still warming |
-| `asr-api` MLX | repeats 2-5 | `1006-1021ms` | `10.77-10.93x` | steady warm path |
+A corrective run processed the `17` possible affected sources.
+Six invocations exceeded `128` tokens, and three reached `384`.
+Inspect a limit stop before you increase the production limit.
 
-`/tmp/asr-cohere-bench-30.wav`, 30.0s audio, Cohere MLX, release build,
-`--max-new-tokens 128`:
+An exact Unicode comparison used `231` definitely valid source pairs.
+The macOS-to-NVIDIA character edit distance was `240,913`.
+This value is edit distance, not word error rate.
 
-| Runtime | Shape | Timing | RTFx | Notes |
-| --- | --- | ---: | ---: | --- |
-| `asr-api` MLX | init | `8260.89ms` | - | model load and backend setup |
-| `asr-api` MLX | warmup 1 | `6535.53ms` | `4.59x` | cold request |
-| `asr-api` MLX | repeats 1-3 | `1986-1989ms` | `15.08-15.10x` | steady warm path |
+See [NVIDIA Cohere PCM Benchmark](docs/nvidia-cohere-pcm-benchmark-2026-07-28.md)
+for the complete configuration, distributions, and bottleneck assessment.
 
-Local service-stack MLX results:
+Warm Cohere MLX reached approximately `10.8x` realtime on an 11-second sample.
+It reached approximately `15.1x` realtime on a 30-second sample.
 
-| Runtime | Topology | Measured load | Stage RTFx | Whole RTFx | Response mean | Notes |
-| --- | --- | ---: | ---: | ---: | ---: | --- |
-| Mac MLX `asr-api` | `1` worker | `2` x 30s WAV, c=`1` | `14.57` | `3.99` | `4.98s` | Good local-dev path; use one worker. |
-| Mac MLX `asr-api` | `2` workers | `2` x 30s WAV, c=`2` | `1.66` | `0.94` | `40.02s` | Two model copies fought for the same MLX/Metal resources. |
+Four Cohere TensorRT sessions reached `32.9x` stage realtime on RTX 4000 Ada.
+Those sessions used approximately `18.2` to `18.7 GiB` of GPU memory.
 
-The slow MLX numbers are cold-start and first-request Metal compilation
-effects. For this repo, MLX is the Apple Silicon development backend. Ada
-TensorRT is the throughput path.
+Treat these values as hardware-specific measurements.
+Rebuild caches and repeat tests after runtime or model changes.
 
-## Cohere Ada Benchmarks
+See [macOS Native Inference Spike](docs/macos-native-inference-spike.md) and
+[ASR Capability Inventory](docs/asr-capability-inventory.md).
 
-These are point-in-time Cohere Transcribe measurements from the Linode NVIDIA
-RTX 4000 Ada Generation host (`20475 MiB` VRAM) on `2026-05-14`. The
-`asr-api` rows used release binaries and the split upload-response path. This
-path has `ingress`, `decoder`, and `worker` stages. The tests used the Cohere
-ONNX bundle from the bucket. They submitted Harvard `*.s16le` PCM files over
-HTTP/2 after warmup.
+## Internal Cache API
 
-| Runtime | Topology | Measured load | OK / fail | Stage RTFx | Whole RTFx | Mean TTFB | Response mean | GPU VRAM | Notes |
-| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |
-| `asr-api` ONNX + TensorRT | `4` workers x `1` ONNX session, `max_inflight=1` each | `100`, c=`4` | `100 / 0` | `32.90` | `21.11` | `146.12 ms` | `298.80 ms` | `18681 MiB` | Best measured stage RTFx, with `27` internal stale response-claim warnings while clients still saw `100%` OK. |
-| `asr-api` ONNX + TensorRT | `2` workers x `2` ONNX sessions, `max_inflight=2` each | `100`, c=`4` | `100 / 0` | `32.80` | `21.01` | `142.15 ms` | `314.26 ms` | `18347 MiB` | Similar throughput to `4x1`, slightly lower VRAM, `7` stale response-claim warnings. |
-| `asr-api` ONNX + TensorRT | `1` worker x `4` ONNX sessions, `max_inflight=4` | `100`, c=`4` | `100 / 0` | `29.81` | `21.05` | `124.99 ms` | `284.68 ms` | `18182 MiB` | Fits, but did not improve whole-run throughput over split workers. |
-| `asr-api` ONNX + TensorRT | `1` worker x `1` ONNX session | `100`, c=`1` | `100 / 0` | `16.58-16.77` | `13.00` | `53-60 ms` | `157-161 ms` | `~5100 MiB` | Hot-cache 35s TensorRT profile, no server errors. |
-| `asr-api` ONNX + CUDA EP | `1` worker x `1` ONNX session, TensorRT disabled | `100`, c=`1` | `100 / 0` | `11.33` | `8.81` | `52.23 ms` | `237.84 ms` | `10514 MiB` | `ASR_COHERE_TRT_COMPONENTS=none`; clean CUDA-only baseline. |
-| `asr-api` ONNX + CUDA EP | earlier CUDA baseline, `max_inflight=2` | `200`, c=`2` | `200 / 0` | `-` | `17.82` | `53.12 ms` | `255.94 ms` | `~10500 MiB` | User-run baseline before TensorRT tuning; load output did not include stage-window RTFx. |
-| `asr-api` ONNX + decoder-only TensorRT | TensorRT only on decoder components | `100`, c=`1` | `100 / 0` | `8.22` | `-` | `-` | `~332 ms` | `~9400 MiB` | Slower than CUDA-only and full TensorRT; not a useful target. |
+Ingress exposes internal `upload-response` endpoints under `/_upload_response`.
+These endpoints support inspection, claims, stage writes, and response writes.
 
-Capacity observations from the same host:
+The principal endpoint groups are:
 
-| Runtime | Topology | Result |
-| --- | --- | --- |
-| ONNX + TensorRT | `4` total sessions | Fits in all tested shapes (`1x4`, `2x2`, `4x1`), using about `18.2-18.7 GiB` steady-state VRAM. |
-| ONNX + TensorRT | `5` total sessions | Not tested as a target; expected to be too tight on a `20 GiB` Ada card without reducing per-session memory. |
-| ONNX + CUDA EP | `1` worker x `2` ONNX sessions | A single worker with two CUDA sessions consumed about `20012 MiB`; effectively full-card. |
-| ONNX + CUDA EP | `2` workers x `2` ONNX sessions | Failed startup. One worker survived at about `20012 MiB`; the other failed initializing `decoder_cached_step` with a CUDA BFCArena allocation error for `67108864` bytes. |
+- `/streams` for stream inspection;
+- `/streams/{stream_id}/request` for request data;
+- `/streams/{stream_id}/stages/{stage}` for stage data;
+- `/streams/{stream_id}/readers/{worker_id}` for reader registration;
+- `/streams/{stream_id}/response` for response data.
 
-Memory efficiency matters more than the single-session footprint. Full
-TensorRT used about `~5.1 GiB` for one hot 35s session and `18.2-18.7 GiB` for
-four total sessions. This configuration kept the `20 GiB` Ada card below
-capacity and increased useful concurrency. Plain ONNX CUDA EP filled the card
-at two sessions. It failed with the four-session topology.
-
-The practical deployment conclusion from these measurements is that full
-TensorRT is both faster and more memory efficient on Ada. It is what makes four
-total Cohere ONNX sessions fit on the `20 GiB` RTX 4000 Ada host.
+These endpoints are service-internal interfaces.
+Client applications must use `/v1/listen`.
 
 ## Example Workload
 
 The [Bitneedle scratch tutorial sweep](examples/bitneedle-scratch-tutorial-sweep/README.md)
-is the worked example in this repo. It does these tasks:
+shows one complete research pipeline.
 
-- resolves public DJ scratching tutorials through `av-ingest`
-- segments the audio into mono `16 kHz` WAV chunks
-- submits the chunks to `/v1/listen`
-- stores technique tags, timestamped summaries, term counts, and UI notes.
-
-The stored research artifacts do not contain verbatim transcripts.
-
-Measured portion from the `2026-05-17` run:
-
-- `78` uploaded chunks across `11` videos
-- `4,378.0s` aggregate media duration
-- `294.4s` aggregate summed wall-clock time
-- `14.87x` aggregate observed RTFx
-
-## Internal Cache API
-
-Ingress serves the `upload-response` cache API for inspection and worker
-handoff:
-
-- `GET /_upload_response/streams`
-- `GET /_upload_response/streams/{stream_id}`
-- `GET /_upload_response/streams/{stream_id}/request/last`
-- `GET /_upload_response/streams/{stream_id}/request/slots/{slot_id}`
-- `GET /_upload_response/streams/{stream_id}/stages/{stage}/last`
-- `GET /_upload_response/streams/{stream_id}/stages/{stage}/slots/{slot_id}`
-- `GET /_upload_response/streams/{stream_id}/response/last`
-- `GET /_upload_response/streams/{stream_id}/response/slots/{slot_id}`
-- `PUT /_upload_response/streams/{stream_id}/readers/{worker_id}`
-- `DELETE /_upload_response/streams/{stream_id}/readers/{worker_id}`
-- `PUT /_upload_response/streams/{stream_id}/stages/{stage}/claim/{worker_id}`
-- `DELETE /_upload_response/streams/{stream_id}/stages/{stage}/claim/{worker_id}`
-- `PUT /_upload_response/streams/{stream_id}/stages/{stage}/head`
-- `PUT /_upload_response/streams/{stream_id}/stages/{stage}/body`
-- `PUT /_upload_response/streams/{stream_id}/stages/{stage}/control`
-- `PUT /_upload_response/streams/{stream_id}/stages/{stage}/end`
-- `PUT /_upload_response/streams/{stream_id}/response/claim/{worker_id}`
-- `DELETE /_upload_response/streams/{stream_id}/response/claim/{worker_id}`
-- `PUT /_upload_response/streams/{stream_id}/response/headers`
-- `PUT /_upload_response/streams/{stream_id}/response/body`
-- `PUT /_upload_response/streams/{stream_id}/response/end`
-
-`upload-response` cache sizing matters because `ChunkCache` eagerly allocates
-ring buffers. The baseline config uses `16` streams, `32 KiB` slots, and `1024`
-slots per stream for the request ring, decoded stage lane, and response ring.
-
-Ingress stores raw upload bytes in the request ring, so request pressure depends
-on the input codec and bitrate. The decoder writes canonical PCM into the
-`decoded` stage lane. With mono `16 kHz` `f32`, that lane stores about
-`62.5 KiB/s`. At `1024 * 32 KiB`, each stream has about `32 MiB`, or roughly
-`8.7 minutes`, of decoded PCM capacity before wrapping. Use `2048` slots for
-about `17.5 minutes`, or `4096` for about `35 minutes`.
+It resolves media, creates audio chunks, calls `/v1/listen`, and stores derived
+research artifacts.
 
 ## Verification
 
-The current cleanup was verified with:
+Check the Cohere ONNX build:
 
 ```bash
 cargo check --no-default-features \
   --features cohere-backend,audio-decoder \
   --bin asr-api --bin local-orchestrator --bin cohere-debug
+```
 
+Check the Cohere MLX build:
+
+```bash
 MACOSX_DEPLOYMENT_TARGET=14.0 \
   cargo check --no-default-features \
   --features cohere-mlx,audio-decoder \
   --bin asr-api --bin local-orchestrator
 
+(cd apple && swift build -c debug)
+```
+
+Check the Parakeet TDT build:
+
+```bash
 cargo check --no-default-features \
   --features parakeet-backend,audio-decoder \
   --bin asr-api --bin local-orchestrator
-
-(cd apple && swift build -c debug)
-
-cargo test --no-default-features --features cohere-backend,audio-decoder --lib
 ```
+
+Run the Rust library tests:
+
+```bash
+cargo test --no-default-features \
+  --features cohere-backend,audio-decoder \
+  --lib
+```
+
+## Further Reading
+
+- [ASR Capability Inventory](docs/asr-capability-inventory.md)
+- [ASR MLX Bring-Up Findings](docs/asr-mlx-bringup-findings.md)
+- [macOS Native Inference Spike](docs/macos-native-inference-spike.md)
+- [`asr-onnx` export and runtime guide](../asr-onnx/README.md)
