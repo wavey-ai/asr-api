@@ -661,23 +661,6 @@ One worker used two TensorRT sessions and three concurrent requests.
 The run reached `78.370x` effective realtime and `75.409x` lifecycle-inclusive realtime.
 Median GPU utilization was `82%`, and maximum GPU memory was `9,662 MiB`.
 
-Effective `RTFx` is batch audio duration divided by benchmark duration.
-The measured rate equals `1,880.9` audio hours for each day.
-A `70%` planning rate equals `1,316.6` audio hours for each day.
-These rates do not state the supported number of simultaneous live connections.
-
-The run used a benchmark-specific `128`-token limit.
-Six model invocations reached that limit.
-Use the production default of `384` for representative tests.
-
-A corrective run processed the `17` possible affected sources.
-Six invocations exceeded `128` tokens, and three reached `384`.
-Inspect a limit stop before you increase the production limit.
-
-An exact Unicode comparison used `231` definitely valid source pairs.
-The macOS-to-NVIDIA character edit distance was `240,913`.
-This value is edit distance, not word error rate.
-
 See [NVIDIA Cohere PCM Benchmark](docs/nvidia-cohere-pcm-benchmark-2026-07-28.md)
 for the complete configuration, distributions, and bottleneck assessment.
 
