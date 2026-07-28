@@ -1666,10 +1666,9 @@ fn reconcile_anchor_order(words: &mut [Option<TimedWord>]) -> Result<()> {
             minimum_boundary <= maximum_boundary,
             "direct CTC calibration left no time between anchors"
         );
-        let preferred_boundary =
-            ((u64::from(left.end_ms) + u64::from(right.start_ms))
-                .saturating_sub(u64::from(gap_words))
-                / 2) as u32;
+        let preferred_boundary = ((u64::from(left.end_ms) + u64::from(right.start_ms))
+            .saturating_sub(u64::from(gap_words))
+            / 2) as u32;
         let boundary = preferred_boundary.clamp(minimum_boundary, maximum_boundary);
         left.end_ms = boundary;
         right.start_ms = boundary + gap_words;
@@ -2458,8 +2457,7 @@ mod tests {
             ..permissive_direct_config()
         };
 
-        let words =
-            direct_anchor_reference_words(&reference, &hypothesis, 400, &config).unwrap();
+        let words = direct_anchor_reference_words(&reference, &hypothesis, 400, &config).unwrap();
 
         assert_eq!((words[0].start_ms, words[0].end_ms), (31, 174));
         assert_eq!((words[1].start_ms, words[1].end_ms), (174, 318));
@@ -2479,8 +2477,7 @@ mod tests {
             ..permissive_direct_config()
         };
 
-        let words =
-            direct_anchor_reference_words(&reference, &hypothesis, 300, &config).unwrap();
+        let words = direct_anchor_reference_words(&reference, &hypothesis, 300, &config).unwrap();
 
         assert!(words[0].end_ms <= words[1].start_ms);
         assert!(words[1].end_ms <= words[2].start_ms);
