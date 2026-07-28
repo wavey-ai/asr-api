@@ -169,7 +169,7 @@ dependencies = [
  "async-trait",
  "av-api",
  "av-upload-response",
- "av-web-service 0.1.0 (git+https://github.com/wavey-ai/web-services.git?branch=main)",
+ "av-web-service",
  "bytes",
  "chrono",
  "clap 4.6.4",
@@ -261,32 +261,32 @@ checksum = "f2032f911046de80f0a198e0901378627c33f59ea0ac00e363d481118bd70a53"
 [[package]]
 name = "av-api"
 version = "0.1.0"
-source = "git+https://github.com/wavey-ai/av-api.git?branch=main#0c3ab4e063e924fef40791830cf313bba32a694f"
+source = "git+https://github.com/wavey-ai/av-api.git?branch=main#6b50d0025adfa924a6c2d03338fde663244cb10c"
 dependencies = [
  "anyhow",
+ "av-upload-response",
  "bytes",
  "http",
  "soundkit",
  "soundkit-decoder",
  "talkback-media",
- "upload-response",
 ]
 
 [[package]]
 name = "av-upload-response"
 version = "0.1.0"
-source = "git+https://github.com/wavey-ai/web-services.git?branch=main#49d8a95c556ccb662d61635015ccbc5dfc675870"
+source = "git+https://github.com/wavey-ai/web-services.git?branch=main#ab42087605a8f06ee2a92cf90b85ea30f262d642"
 dependencies = [
  "anyhow",
  "async-trait",
- "av-web-service 0.1.0 (git+https://github.com/wavey-ai/web-services.git)",
+ "av-web-service",
  "bytes",
  "futures-util",
  "http",
  "http-pack",
  "hyper",
  "hyper-util",
- "playlists 0.1.6",
+ "playlists",
  "reqwest 0.13.4",
  "rustls 0.23.42",
  "rustls-pemfile",
@@ -301,7 +301,7 @@ dependencies = [
 [[package]]
 name = "av-web-service"
 version = "0.1.0"
-source = "git+https://github.com/wavey-ai/web-services.git?branch=main#49d8a95c556ccb662d61635015ccbc5dfc675870"
+source = "git+https://github.com/wavey-ai/web-services.git?branch=main#ab42087605a8f06ee2a92cf90b85ea30f262d642"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -322,7 +322,7 @@ dependencies = [
  "hyper",
  "hyper-rustls",
  "hyper-util",
- "playlists 0.1.6",
+ "playlists",
  "quinn",
  "regex",
  "rustls 0.23.42",
@@ -331,58 +331,14 @@ dependencies = [
  "serde_json",
  "structopt",
  "thiserror 2.0.19",
- "tls-helpers 0.2.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "tls-helpers 0.2.0",
  "tokio",
  "tokio-tungstenite",
  "tracing",
  "tracing-subscriber",
  "url",
  "webpki-roots 1.0.9",
- "xmpegts 0.2.4",
- "xxhash-rust",
-]
-
-[[package]]
-name = "av-web-service"
-version = "0.1.0"
-source = "git+https://github.com/wavey-ai/web-services.git#49d8a95c556ccb662d61635015ccbc5dfc675870"
-dependencies = [
- "anyhow",
- "async-trait",
- "base64 0.22.1",
- "bytes",
- "dotenvy",
- "env_logger",
- "futures-util",
- "gen-id 0.3.0 (registry+https://github.com/rust-lang/crates.io-index)",
- "h2",
- "h3",
- "h3-datagram",
- "h3-quinn",
- "h3-webtransport",
- "http",
- "http-body-util",
- "http-pack",
- "hyper",
- "hyper-rustls",
- "hyper-util",
- "playlists 0.1.6",
- "quinn",
- "regex",
- "rustls 0.23.42",
- "rustls-pemfile",
- "serde",
- "serde_json",
- "structopt",
- "thiserror 2.0.19",
- "tls-helpers 0.2.0 (registry+https://github.com/rust-lang/crates.io-index)",
- "tokio",
- "tokio-tungstenite",
- "tracing",
- "tracing-subscriber",
- "url",
- "webpki-roots 1.0.9",
- "xmpegts 0.2.4",
+ "xmpegts",
  "xxhash-rust",
 ]
 
@@ -527,23 +483,6 @@ name = "bytes"
 version = "1.12.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fc652a48c352aef3ea3aed32080501cf3ef6ed5da78602a020c991775b0aff04"
-
-[[package]]
-name = "bytesio"
-version = "0.3.3"
-source = "git+https://github.com/wavey-ai/xiu#bb094ea076ae758d7b62642ab403fd2e94db027b"
-dependencies = [
- "async-trait",
- "byteorder",
- "bytes",
- "failure",
- "futures",
- "log",
- "rand 0.3.23",
- "tokio",
- "tokio-stream",
- "tokio-util 0.6.10",
-]
 
 [[package]]
 name = "bytesio"
@@ -2794,22 +2733,6 @@ checksum = "19f132c84eca552bf34cab8ec81f1c1dcc229b811638f9d283dceabe58c5569e"
 
 [[package]]
 name = "playlists"
-version = "0.1.3"
-source = "git+https://github.com/wavey-ai/playlists.git?rev=885ffe5a29ed89a3946179cc4dc2c73399665310#885ffe5a29ed89a3946179cc4dc2c73399665310"
-dependencies = [
- "access-unit",
- "bytes",
- "chrono",
- "flate2",
- "thiserror 1.0.69",
- "tls-helpers 0.2.0 (registry+https://github.com/rust-lang/crates.io-index)",
- "tokio",
- "tracing",
- "xxhash-rust",
-]
-
-[[package]]
-name = "playlists"
 version = "0.1.6"
 source = "git+https://github.com/wavey-ai/playlists.git#2d3043376dec86bca0a8dea33c6fe614089b3ca1"
 dependencies = [
@@ -2818,7 +2741,7 @@ dependencies = [
  "chrono",
  "flate2",
  "thiserror 1.0.69",
- "tls-helpers 0.2.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "tls-helpers 0.2.0",
  "tokio",
  "tracing",
  "xxhash-rust",
@@ -4222,7 +4145,7 @@ dependencies = [
 [[package]]
 name = "talkback-media"
 version = "0.1.1"
-source = "git+https://github.com/wavey-ai/av-api.git?branch=main#0c3ab4e063e924fef40791830cf313bba32a694f"
+source = "git+https://github.com/wavey-ai/av-api.git?branch=main#6b50d0025adfa924a6c2d03338fde663244cb10c"
 dependencies = [
  "bytes",
 ]
@@ -4383,19 +4306,6 @@ name = "tls-helpers"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "83865f41768d6c4608fd739e8984e334a3a59f074fcb348ef0be7e5048dc9c9c"
-dependencies = [
- "base64 0.22.1",
- "rustls 0.23.42",
- "rustls-pemfile",
- "rustls-pki-types",
- "tokio",
- "tokio-rustls",
-]
-
-[[package]]
-name = "tls-helpers"
-version = "0.2.0"
-source = "git+https://github.com/wavey-ai/tls-helpers.git#87aac4e12378861e37a583520dfa55f925aff840"
 dependencies = [
  "base64 0.22.1",
  "rustls 0.23.42",
@@ -4769,32 +4679,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6d49784317cd0d1ee7ec5c716dd598ec5b4483ea832a2dced265471cc0f690ae"
 
 [[package]]
-name = "upload-response"
-version = "0.1.0"
-source = "git+https://github.com/wavey-ai/web-services.git?rev=b7a7359668651daa481622b7d17acee372591edb#b7a7359668651daa481622b7d17acee372591edb"
-dependencies = [
- "anyhow",
- "async-trait",
- "bytes",
- "futures-util",
- "http",
- "http-pack",
- "hyper",
- "hyper-util",
- "playlists 0.1.3",
- "reqwest 0.13.4",
- "rustls 0.23.42",
- "rustls-pemfile",
- "serde",
- "serde_json",
- "tokio",
- "tokio-rustls",
- "tokio-tungstenite",
- "tracing",
- "web-service",
-]
-
-[[package]]
 name = "ureq"
 version = "3.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4972,50 +4856,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "dc1b4cb0cc549fcf58d7dfc081778139b3d283a081644e833e84682ad71cea24"
 dependencies = [
  "unicode-ident",
-]
-
-[[package]]
-name = "web-service"
-version = "0.1.0"
-source = "git+https://github.com/wavey-ai/web-services.git?rev=b7a7359668651daa481622b7d17acee372591edb#b7a7359668651daa481622b7d17acee372591edb"
-dependencies = [
- "anyhow",
- "async-trait",
- "base64 0.22.1",
- "bytes",
- "dotenvy",
- "env_logger",
- "futures-util",
- "gen-id 0.3.0 (git+https://github.com/wavey-ai/gen-id.git)",
- "h2",
- "h3",
- "h3-datagram",
- "h3-quinn",
- "h3-webtransport",
- "http",
- "http-body-util",
- "http-pack",
- "hyper",
- "hyper-rustls",
- "hyper-util",
- "playlists 0.1.3",
- "quinn",
- "regex",
- "rustls 0.23.42",
- "rustls-pemfile",
- "serde",
- "serde_json",
- "structopt",
- "thiserror 2.0.19",
- "tls-helpers 0.2.0 (git+https://github.com/wavey-ai/tls-helpers.git)",
- "tokio",
- "tokio-tungstenite",
- "tracing",
- "tracing-subscriber",
- "url",
- "webpki-roots 1.0.9",
- "xmpegts 0.2.0",
- "xxhash-rust",
 ]
 
 [[package]]
@@ -5278,24 +5118,13 @@ checksum = "1ffae5123b2d3fc086436f8834ae3ab053a283cfac8fe0a0b8eaae044768a4c4"
 
 [[package]]
 name = "xmpegts"
-version = "0.2.0"
-source = "git+https://github.com/wavey-ai/xiu#bb094ea076ae758d7b62642ab403fd2e94db027b"
-dependencies = [
- "byteorder",
- "bytes",
- "bytesio 0.3.3",
- "failure",
-]
-
-[[package]]
-name = "xmpegts"
 version = "0.2.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c9d75f4efc5e9d204167dfa9e7037084b18de4dc728b1b72c3f60e83618a3487"
 dependencies = [
  "byteorder",
  "bytes",
- "bytesio 0.3.4",
+ "bytesio",
  "failure",
 ]
 
