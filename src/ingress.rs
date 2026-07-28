@@ -655,7 +655,7 @@ async fn write_stream_error(
         response = response.header("etag", etag.to_string());
     }
     for (key, value) in handler_response.headers {
-        response = response.header(&key, &value);
+        response = response.header(key.as_ref(), value.as_ref());
     }
 
     stream_writer.send_response(response.body(())?).await?;
