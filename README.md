@@ -366,7 +366,7 @@ cargo build --release --no-default-features \
 
 ```bash
 cd apple
-swift build -c release
+./build.sh
 cd ..
 
 MACOSX_DEPLOYMENT_TARGET=14.0 \
